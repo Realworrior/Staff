@@ -16,8 +16,11 @@ const api = axios.create({
 // Add token to requests
 api.interceptors.request.use((config) => {
     const token = localStorage.getItem('token');
+    // Ensure headers object exists to avoid runtime error when setting Authorization
+    config.headers = config.headers || {};
     if (token) {
-        config.headers.Authorization = `Bearer ${token}`;
+        // some axios types mark headers as AxiosHeaders or plain object; cast to any to be safe
+        (config.headers as any).Authorization = `Bearer ${token}`;
     }
     return config;
 });
