@@ -1,15 +1,10 @@
 import axios from 'axios';
 
-let apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// Use relative path in DEV to leverage Vite proxy (fixes firewall issues)
+// In PROD, use the VITE_API_URL environment variable
+const API_URL = import.meta.env.DEV ? '/api' : (import.meta.env.VITE_API_URL || '/api');
 
-// If accessing via network IP (not localhost), use that IP for the API
-if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
-    apiUrl = apiUrl.replace('localhost', window.location.hostname).replace('127.0.0.1', window.location.hostname);
-}
-
-export const API_BASE_URL = apiUrl;
-
-const API_URL = apiUrl;
+export const API_BASE_URL = API_URL;
 
 const api = axios.create({
     baseURL: API_URL,
