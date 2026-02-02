@@ -24,12 +24,12 @@ export const Login = () => {
         const user = username.toLowerCase().trim();
         const pass = password.trim();
 
-        const success = await login(user, pass);
+        const errorMsg = await login(user, pass);
 
-        if (success) {
+        if (!errorMsg) {
             navigate('/');
         } else {
-            setError('Invalid credentials.');
+            setError(errorMsg);
         }
     };
 
@@ -57,6 +57,9 @@ export const Login = () => {
                                 <UserCircle2 className="absolute left-3 top-1/2 -translate-y-1/2 text-[rgb(var(--text-tertiary))] group-focus-within:text-[rgb(var(--accent-primary))] transition-colors" size={20} />
                                 <input
                                     type="text"
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    autoComplete="username"
                                     value={username}
                                     onChange={(e) => setUsername(e.target.value)}
                                     className="w-full pl-11 pr-4 py-3 rounded-xl border border-[rgb(var(--border-color))] bg-[rgb(var(--bg-primary))] text-[rgb(var(--text-primary))] focus:ring-2 focus:ring-[rgb(var(--accent-primary))] focus:border-transparent outline-none transition-all placeholder:text-[rgb(var(--text-tertiary))]"
@@ -72,6 +75,9 @@ export const Login = () => {
                                 <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-[rgb(var(--text-tertiary))] group-focus-within:text-[rgb(var(--accent-primary))] transition-colors" size={20} />
                                 <input
                                     type={showPassword ? "text" : "password"}
+                                    autoCapitalize="none"
+                                    autoCorrect="off"
+                                    autoComplete="current-password"
                                     value={password}
                                     onChange={(e) => setPassword(e.target.value)}
                                     className="w-full pl-11 pr-12 py-3 rounded-xl border border-[rgb(var(--border-color))] bg-[rgb(var(--bg-primary))] text-[rgb(var(--text-primary))] focus:ring-2 focus:ring-[rgb(var(--accent-primary))] focus:border-transparent outline-none transition-all placeholder:text-[rgb(var(--text-tertiary))]"

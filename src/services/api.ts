@@ -1,6 +1,13 @@
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+let apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+
+// If accessing via network IP (not localhost), use that IP for the API
+if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+    apiUrl = apiUrl.replace('localhost', window.location.hostname).replace('127.0.0.1', window.location.hostname);
+}
+
+const API_URL = apiUrl;
 
 const api = axios.create({
     baseURL: API_URL,

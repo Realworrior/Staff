@@ -28,6 +28,11 @@
     "noUncheckedSideEffectImports": true
   },
   "include": [
-    "src/**/*"
+    "src",
+    "./src",
+    "src/**/*",
+    "./src/**/*",
+    "Src",
+    "Src/**/*"
   ]
 }

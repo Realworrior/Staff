@@ -27,6 +27,12 @@ const PORT = process.env.PORT || 3001;
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Request logging middleware
+app.use((req, res, next) => {
+    console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - IP: ${req.ip}`);
+    next();
+});
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Socket.io logic

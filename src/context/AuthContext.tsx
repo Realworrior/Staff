@@ -16,7 +16,7 @@ export interface User {
 interface AuthContextType {
     user: User | null;
     isAuthenticated: boolean;
-    login: (username: string, pass: string) => Promise<boolean>;
+    login: (username: string, pass: string) => Promise<string | null>;
     logout: () => void;
     loading: boolean;
 
@@ -87,7 +87,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         }
     };
 
-    const login = async (username: string, pass: string): Promise<boolean> => {
+    const login = async (username: string, pass: string): Promise<string | null> => {
         try {
             const response = await authAPI.login(username, pass);
             const { token, user: userData } = response.data;
@@ -96,10 +96,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             localStorage.setItem(USER_KEY, JSON.stringify(userData));
             setUser(userData);
             setSelectedBranch(userData.branch || 'betfalme');
-            return true;
-        } catch (error) {
+            return null; // Success
+        } catch (error: any) {
             console.error('Login failed:', error);
-            return false;
+            if (error.code === 'ERR_NETWORK') {
+                return 'Network Error. Server unreachable.';
+            }
+            if (error.response?.status === 401) {
+                return 'Invalid credentials.';
+            }
+            return error.response?.data?.message || 'Login failed. Please try again.';
         }
     };
 
