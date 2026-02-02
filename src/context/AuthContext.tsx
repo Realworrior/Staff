@@ -103,9 +103,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 return 'Network Error. Server unreachable.';
             }
             if (error.response?.status === 401) {
-                return 'Invalid credentials.';
+                return error.response?.data?.error || 'Invalid credentials.';
             }
-            return error.response?.data?.message || 'Login failed. Please try again.';
+            return error.response?.data?.message || error.response?.data?.error || 'Login failed. Please try again.';
         }
     };
 
