@@ -99,11 +99,11 @@ export const AttendanceProvider = ({ children }: { children: ReactNode }) => {
                     attendanceAPI.getAll(params),
                     attendanceAPI.getSummary(params)
                 ]);
-                setAllStaffRecords(allRes.data.map(mapRecord));
+                setAllStaffRecords(Array.isArray(allRes.data) ? allRes.data.map(mapRecord) : []);
                 setSummary(summRes.data);
             } else {
                 const res = await attendanceAPI.getMyRecords();
-                setRecords(res.data.map(mapRecord));
+                setRecords(Array.isArray(res.data) ? res.data.map(mapRecord) : []);
             }
         } catch (error) {
             console.error('Failed to fetch attendance data:', error);

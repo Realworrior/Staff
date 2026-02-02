@@ -68,7 +68,7 @@ export const Dashboard = () => {
                         branch: selectedBranch
                     });
 
-                    const allShifts = response.data;
+                    const allShifts = Array.isArray(response.data) ? response.data : [];
 
                     const myShifts = allShifts
                         .filter((s: any) => s.user_id.toString() === user.id.toString())
