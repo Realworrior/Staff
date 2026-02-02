@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Lock, ChevronRight, UserCircle2, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { API_BASE_URL } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import logoDark from '../assets/logo-dark.png';
@@ -115,6 +116,11 @@ export const Login = () => {
                                 <div><span className="font-medium text-[rgb(var(--accent-primary))]">admin</span> / falmebet123</div>
                                 <div><span className="font-medium text-blue-500">supervisor</span> / falmebet123</div>
                                 <div><span className="font-medium text-[rgb(var(--accent-primary))]">staff</span> / falmebet123</div>
+                            </div>
+
+                            <div className="pt-2 mt-2 border-t border-[rgb(var(--border-color))]">
+                                <p className="font-semibold text-[10px] text-[rgb(var(--text-tertiary))]">API Target:</p>
+                                <code className="text-[10px] text-[rgb(var(--text-tertiary))] block break-all">{API_BASE_URL}</code>
                             </div>
                         </div>
                     </form>
