@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useAuth, type UserRole } from '../context/AuthContext';
-import { Plus, Trash2, Shield, User, Users, Loader2, Edit2 } from 'lucide-react';
+import { Plus, Trash2, Shield, User, Users as UsersIcon, Loader2, Edit2 } from 'lucide-react';
 import { usersAPI } from '../services/api';
 
 export const UserManagement = () => {
-    const { users, addUser, deleteUser, user: currentUser, refreshUsers } = useAuth();
+    const { users, addUser, deleteUser, user: currentUser, refreshUsers, selectedBranch } = useAuth();
     const [isAdding, setIsAdding] = useState(false);
     const [editingUser, setEditingUser] = useState<any | null>(null);
     const [submitting, setSubmitting] = useState(false);
@@ -42,6 +42,7 @@ export const UserManagement = () => {
                     name,
                     role,
                     transport_allowance: transportAllowance,
+                    branch: selectedBranch,
                 });
 
                 if (success) {
@@ -87,7 +88,7 @@ export const UserManagement = () => {
     const getRoleIcon = (role: UserRole) => {
         switch (role) {
             case 'admin': return <Shield className="text-[rgb(var(--accent-primary))]" size={20} />;
-            case 'supervisor': return <Users className="text-blue-500" size={20} />;
+            case 'supervisor': return <UsersIcon className="text-blue-500" size={20} />;
             case 'staff': return <User className="text-emerald-500" size={20} />;
         }
     };
@@ -97,7 +98,9 @@ export const UserManagement = () => {
             <div className="flex justify-between items-center mb-8">
                 <div>
                     <h1 className="text-2xl font-bold text-[rgb(var(--text-primary))]">User Management</h1>
-                    <p className="text-[rgb(var(--text-secondary))]">Add or remove system users</p>
+                    <p className="text-[rgb(var(--text-secondary))] underline decoration-accent-primary decoration-2 underline-offset-4">
+                        Manage Office: {selectedBranch === 'betfalme' ? 'Betfalme' : 'Sofa/Safi'}
+                    </p>
                 </div>
                 <button
                     onClick={() => {
@@ -210,7 +213,7 @@ export const UserManagement = () => {
 
             <div className="bg-[rgb(var(--bg-secondary))] rounded-2xl shadow-sm border border-[rgb(var(--border-color))] overflow-hidden">
                 <div className="p-6 border-b border-[rgb(var(--border-color))]">
-                    <h3 className="font-bold text-[rgb(var(--text-primary))]">System Users</h3>
+                    <h3 className="font-bold text-[rgb(var(--text-primary))]">System Users ({selectedBranch === 'betfalme' ? 'Betfalme' : 'Sofa/Safi'})</h3>
                 </div>
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
@@ -224,48 +227,50 @@ export const UserManagement = () => {
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-[rgb(var(--border-color))]">
-                            {users.map((u) => (
-                                <tr key={u.id} className="hover:bg-[rgb(var(--bg-tertiary))] transition-colors group">
-                                    <td className="px-6 py-4">
-                                        <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-full bg-[rgb(var(--bg-tertiary))] overflow-hidden flex-shrink-0">
-                                                <img src={u.avatar} alt={u.name} className="w-full h-full object-cover" />
+                            {users
+                                .filter(u => u.branch === selectedBranch)
+                                .map((u) => (
+                                    <tr key={u.id} className="hover:bg-[rgb(var(--bg-tertiary))] transition-colors group">
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-3">
+                                                <div className="w-10 h-10 rounded-full bg-[rgb(var(--bg-tertiary))] overflow-hidden flex-shrink-0">
+                                                    <img src={u.avatar} alt={u.name} className="w-full h-full object-cover" />
+                                                </div>
+                                                <span className="font-semibold text-[rgb(var(--text-primary))]">{u.name}</span>
                                             </div>
-                                            <span className="font-semibold text-[rgb(var(--text-primary))]">{u.name}</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4">
-                                        <div className="flex items-center gap-2">
-                                            {getRoleIcon(u.role)}
-                                            <span className="capitalize text-[rgb(var(--text-primary))] text-sm">{u.role}</span>
-                                        </div>
-                                    </td>
-                                    <td className="px-6 py-4 text-[rgb(var(--text-secondary))] font-mono text-sm">
-                                        {u.username}
-                                    </td>
-                                    <td className="px-6 py-4 text-right font-mono text-sm font-bold text-[rgb(var(--accent-primary))]">
-                                        {u.transport_allowance || 0}
-                                    </td>
-                                    <td className="px-6 py-4 text-right flex items-center justify-end gap-2">
-                                        <button
-                                            onClick={() => handleEdit(u)}
-                                            className="p-2 text-[rgb(var(--text-tertiary))] hover:text-[rgb(var(--accent-primary))] hover:bg-[rgb(var(--accent-light))] rounded-lg transition-all"
-                                            title="Edit User"
-                                        >
-                                            <Edit2 size={18} />
-                                        </button>
-                                        {u.username !== 'admin' && u.id.toString() !== currentUser?.id?.toString() && (
+                                        </td>
+                                        <td className="px-6 py-4">
+                                            <div className="flex items-center gap-2">
+                                                {getRoleIcon(u.role)}
+                                                <span className="capitalize text-[rgb(var(--text-primary))] text-sm">{u.role}</span>
+                                            </div>
+                                        </td>
+                                        <td className="px-6 py-4 text-[rgb(var(--text-secondary))] font-mono text-sm">
+                                            {u.username}
+                                        </td>
+                                        <td className="px-6 py-4 text-right font-mono text-sm font-bold text-[rgb(var(--accent-primary))]">
+                                            {u.transport_allowance || 0}
+                                        </td>
+                                        <td className="px-6 py-4 text-right flex items-center justify-end gap-2">
                                             <button
-                                                onClick={() => handleDelete(u.id, u.name)}
-                                                className="p-2 text-[rgb(var(--text-tertiary))] hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
-                                                title="Delete User"
+                                                onClick={() => handleEdit(u)}
+                                                className="p-2 text-[rgb(var(--text-tertiary))] hover:text-[rgb(var(--accent-primary))] hover:bg-[rgb(var(--accent-light))] rounded-lg transition-all"
+                                                title="Edit User"
                                             >
-                                                <Trash2 size={18} />
+                                                <Edit2 size={18} />
                                             </button>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
+                                            {u.username !== 'admin' && u.id.toString() !== currentUser?.id?.toString() && (
+                                                <button
+                                                    onClick={() => handleDelete(u.id, u.name)}
+                                                    className="p-2 text-[rgb(var(--text-tertiary))] hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-all"
+                                                    title="Delete User"
+                                                >
+                                                    <Trash2 size={18} />
+                                                </button>
+                                            )}
+                                        </td>
+                                    </tr>
+                                ))}
                         </tbody>
                     </table>
                 </div>

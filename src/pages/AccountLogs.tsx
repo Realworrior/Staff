@@ -1,17 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Search, Plus, AlertCircle, CheckCircle, Loader2, Download } from 'lucide-react';
 import { accountLogsAPI } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 import { format } from 'date-fns';
 import { clsx } from 'clsx';
 
-type Branch = 'betfalme' | 'safibet' | 'sofabet' | 'spursbet';
 type Status = 'open' | 'pending' | 'closed';
 type Priority = 'low' | 'medium' | 'high';
 
 interface AccountLog {
     id: number;
     phone_number: string;
-    branch: Branch;
+    branch: string;
     status: Status;
     request_count: number;
     priority: Priority;
@@ -21,28 +21,30 @@ interface AccountLog {
 }
 
 export const AccountLogs = () => {
+    const { selectedBranch } = useAuth();
     const [logs, setLogs] = useState<AccountLog[]>([]);
     const [loading, setLoading] = useState(true);
     const [submitting, setSubmitting] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [selectedBranch, setSelectedBranch] = useState<Branch>('betfalme');
     const [error, setError] = useState<string | null>(null);
     const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-    const fetchLogs = async () => {
+    const fetchLogs = useCallback(async () => {
+        setLoading(true);
         try {
-            const response = await accountLogsAPI.getAll();
+            // We pass branch to filter on backend
+            const response = await accountLogsAPI.getAll({ params: { branch: selectedBranch } });
             setLogs(response.data.data);
         } catch (err) {
             console.error('Failed to fetch logs:', err);
         } finally {
             setLoading(false);
         }
-    };
+    }, [selectedBranch]);
 
     useEffect(() => {
         fetchLogs();
-    }, []);
+    }, [fetchLogs]);
 
     const handleDownload = () => {
         if (logs.length === 0) return;
@@ -63,7 +65,7 @@ export const AccountLogs = () => {
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.setAttribute('href', url);
-        link.setAttribute('download', `account_deactivation_report_${format(new Date(), 'yyyyMMdd')}.csv`);
+        link.setAttribute('download', `account_report_${selectedBranch}_${format(new Date(), 'yyyyMMdd')}.csv`);
         link.style.visibility = 'hidden';
         document.body.appendChild(link);
         link.click();
@@ -121,7 +123,9 @@ export const AccountLogs = () => {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-[rgb(var(--text-primary))]">Account Deactivation Logs</h1>
-                    <p className="text-[rgb(var(--text-secondary))]">Track frequency of account closure requests for responsible gaming.</p>
+                    <p className="text-[rgb(var(--text-secondary))] underline decoration-accent-primary decoration-2 underline-offset-4">
+                        Office: {selectedBranch === 'betfalme' ? 'Betfalme' : 'Sofa/Safi'}
+                    </p>
                 </div>
                 <button
                     onClick={handleDownload}
@@ -152,16 +156,9 @@ export const AccountLogs = () => {
                     </div>
                     <div className="w-full md:w-48 space-y-2">
                         <label className="text-sm font-semibold text-[rgb(var(--text-secondary))]">Branch</label>
-                        <select
-                            value={selectedBranch}
-                            onChange={(e) => setSelectedBranch(e.target.value as Branch)}
-                            className="w-full px-4 py-3 rounded-xl border border-[rgb(var(--border-color))] bg-[rgb(var(--bg-primary))] text-[rgb(var(--text-primary))] focus:ring-2 focus:ring-[rgb(var(--accent-primary))] transition-all outline-none"
-                        >
-                            <option value="betfalme">Betfalme</option>
-                            <option value="safibet">Safibet</option>
-                            <option value="sofabet">Sofabet</option>
-                            <option value="spursbet">Spursbet</option>
-                        </select>
+                        <div className="px-4 py-3 rounded-xl border border-[rgb(var(--border-color))] bg-[rgb(var(--bg-tertiary))] text-[rgb(var(--text-primary))] font-bold text-sm uppercase">
+                            {selectedBranch}
+                        </div>
                     </div>
                     <button
                         type="submit"
@@ -211,7 +208,7 @@ export const AccountLogs = () => {
                             ) : logs.length > 0 ? logs.map((log: AccountLog) => (
                                 <tr key={log.id} className="hover:bg-[rgb(var(--bg-tertiary))] transition-colors group">
                                     <td className="px-6 py-4 font-semibold text-[rgb(var(--text-primary))]">{log.phone_number}</td>
-                                    <td className="px-6 py-4 capitalize text-[rgb(var(--text-secondary))]">{log.branch}</td>
+                                    <td className="px-6 py-4 capitalize text-[rgb(var(--text-secondary))] font-bold">{log.branch}</td>
                                     <td className="px-6 py-4">
                                         <div className="flex items-center gap-2">
                                             <span className="text-lg font-bold text-[rgb(var(--text-primary))]">{log.request_count}</span>
@@ -250,7 +247,7 @@ export const AccountLogs = () => {
                             )) : (
                                 <tr>
                                     <td colSpan={6} className="px-6 py-12 text-center text-[rgb(var(--text-tertiary))]">
-                                        No deactivation logs found.
+                                        No deactivation logs found for {selectedBranch}.
                                     </td>
                                 </tr>
                             )}

@@ -8,13 +8,21 @@ const router = express.Router();
 // Calculates transport allowance for all staff in a range
 router.get('/calculate', authMiddleware, requireRole('admin', 'supervisor'), (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, branch } = req.query;
 
         if (!startDate || !endDate) {
             return res.status(400).json({ error: 'startDate and endDate are required' });
         }
 
-        const staff = db.prepare("SELECT id, name, role, transport_allowance FROM users WHERE role = 'staff'").all();
+        let staffQuery = "SELECT id, name, role, transport_allowance FROM users WHERE role = 'staff'";
+        const staffParams = [];
+
+        if (branch) {
+            staffQuery += " AND branch = ?";
+            staffParams.push(branch);
+        }
+
+        const staff = db.prepare(staffQuery).all(...staffParams);
 
         const results = staff.map(user => {
             // Count total shifts (PM and NT only) in the range for this user

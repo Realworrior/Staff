@@ -19,6 +19,7 @@ function initializeDatabase() {
       name TEXT NOT NULL,
       email TEXT,
       role TEXT NOT NULL CHECK (role IN ('admin', 'supervisor', 'staff')),
+      branch TEXT NOT NULL DEFAULT 'betfalme',
       avatar TEXT,
       transport_allowance REAL DEFAULT 0,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -33,6 +34,12 @@ function initializeDatabase() {
     if (!columnExists) {
       db.exec("ALTER TABLE users ADD COLUMN transport_allowance REAL DEFAULT 0");
       console.log('✅ Migration: transport_allowance column added to users table');
+    }
+
+    const branchExists = tableInfo.some(col => col.name === 'branch');
+    if (!branchExists) {
+      db.exec("ALTER TABLE users ADD COLUMN branch TEXT NOT NULL DEFAULT 'betfalme'");
+      console.log('✅ Migration: branch column added to users table');
     }
   } catch (error) {
     console.error('Migration error:', error);
@@ -82,6 +89,7 @@ function initializeDatabase() {
       shift_type TEXT,
       notes TEXT,
       created_by INTEGER,
+      branch TEXT NOT NULL DEFAULT 'betfalme',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
       FOREIGN KEY (created_by) REFERENCES users(id),
@@ -89,12 +97,23 @@ function initializeDatabase() {
     )
   `);
 
+  // Migration: Add branch to schedules if it doesn't exist
+  try {
+    const scheduleInfo = db.prepare("PRAGMA table_info(schedules)").all();
+    if (!scheduleInfo.some(col => col.name === 'branch')) {
+      db.exec("ALTER TABLE schedules ADD COLUMN branch TEXT NOT NULL DEFAULT 'betfalme'");
+      console.log('✅ Migration: branch column added to schedules table');
+    }
+  } catch (err) {
+    console.error('Schedule migration error:', err);
+  }
+
   // Leave requests table
   db.exec(`
     CREATE TABLE IF NOT EXISTS account_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       phone_number TEXT NOT NULL,
-      branch TEXT NOT NULL CHECK (branch IN ('betfalme', 'safibet', 'sofabet', 'spursbet')),
+      branch TEXT NOT NULL CHECK (branch IN ('betfalme', 'sofa_safi')),
       status TEXT DEFAULT 'open' CHECK (status IN ('open', 'pending', 'closed')),
       request_count INTEGER DEFAULT 1,
       last_request_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -218,6 +237,7 @@ function initializeDatabase() {
     { name: 'Linda', username: 'linda' },
     { name: 'Terry', username: 'terry' },
     { name: 'Faye', username: 'faye' },
+    { name: 'Staff Member', username: 'staff' },
   ];
 
   const defaultPasswordHash = bcrypt.hashSync('falmebet123', 10);
@@ -236,6 +256,37 @@ function initializeDatabase() {
         `https://ui-avatars.com/api/?name=${staff.name}&background=random`
       );
       console.log(`✅ Staff user created: ${staff.name}`);
+    }
+  });
+
+  // Seed Sofa/Safi staff
+  const sofaStaffList = [
+    { name: 'Mary', username: 'mary' },
+    { name: 'Shillah', username: 'shillah' },
+    { name: 'Ian Kibet', username: 'ian_kibet' },
+    { name: 'Ian Ronoh', username: 'ian_ronoh' },
+    { name: 'Fabrice', username: 'fabrice' },
+    { name: 'Jonathan', username: 'jonathan' },
+    { name: 'Collins', username: 'collins' },
+    { name: 'Joan', username: 'joan' },
+    { name: 'Kelvin', username: 'kelvin' },
+  ];
+
+  sofaStaffList.forEach(staff => {
+    const exists = db.prepare('SELECT id FROM users WHERE username = ?').get(staff.username);
+    if (!exists) {
+      db.prepare(`
+        INSERT INTO users (username, password_hash, name, role, branch, avatar)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `).run(
+        staff.username,
+        defaultPasswordHash,
+        staff.name,
+        'staff',
+        'sofa_safi',
+        `https://ui-avatars.com/api/?name=${staff.name}&background=random`
+      );
+      console.log(`✅ Sofa/Safi staff user created: ${staff.name}`);
     }
   });
 }

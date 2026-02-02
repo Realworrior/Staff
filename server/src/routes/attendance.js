@@ -73,7 +73,7 @@ router.get('/my-records', authMiddleware, (req, res) => {
 // Get all attendance (Admin only)
 router.get('/all', authMiddleware, requireRole('admin'), (req, res) => {
     try {
-        const { startDate, endDate, userId } = req.query;
+        const { startDate, endDate, userId, branch } = req.query;
 
         let query = `
       SELECT a.*, u.name as user_name, u.role as user_role
@@ -82,6 +82,11 @@ router.get('/all', authMiddleware, requireRole('admin'), (req, res) => {
       WHERE 1=1
     `;
         const params = [];
+
+        if (branch) {
+            query += ' AND u.branch = ?';
+            params.push(branch);
+        }
 
         if (startDate) {
             query += ' AND a.date >= ?';
@@ -109,36 +114,63 @@ router.get('/all', authMiddleware, requireRole('admin'), (req, res) => {
 // Get attendance summary (Admin only)
 router.get('/summary', authMiddleware, requireRole('admin'), (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
+        const { startDate, endDate, branch } = req.query;
         const today = new Date().toISOString().split('T')[0];
 
         // Total staff
-        const totalStaff = db.prepare("SELECT COUNT(*) as count FROM users WHERE role IN ('staff', 'supervisor')").get();
+        let staffQuery = "SELECT COUNT(*) as count FROM users WHERE role IN ('staff', 'supervisor')";
+        const staffParams = [];
+        if (branch) {
+            staffQuery += " AND branch = ?";
+            staffParams.push(branch);
+        }
+        const totalStaff = db.prepare(staffQuery).get(...staffParams);
 
         // Present today
-        const presentToday = db.prepare(`
-      SELECT COUNT(DISTINCT user_id) as count 
-      FROM attendance 
-      WHERE date = ?
-    `).get(today);
+        let presentQuery = `
+      SELECT COUNT(DISTINCT a.user_id) as count 
+      FROM attendance a
+      JOIN users u ON a.user_id = u.id
+      WHERE a.date = ?
+    `;
+        const presentParams = [today];
+        if (branch) {
+            presentQuery += " AND u.branch = ?";
+            presentParams.push(branch);
+        }
+        const presentToday = db.prepare(presentQuery).get(...presentParams);
 
         // Average hours worked (last 30 days)
-        const avgHours = db.prepare(`
+        let avgQuery = `
       SELECT AVG(
         CAST((julianday(clock_out) - julianday(clock_in)) * 24 AS REAL)
       ) as avg_hours
-      FROM attendance
+      FROM attendance a
+      JOIN users u ON a.user_id = u.id
       WHERE clock_out IS NOT NULL
-        AND date >= date('now', '-30 days')
-    `).get();
+        AND a.date >= date('now', '-30 days')
+    `;
+        const avgParams = [];
+        if (branch) {
+            avgQuery += " AND u.branch = ?";
+            avgParams.push(branch);
+        }
+        const avgHours = db.prepare(avgQuery).get(...avgParams);
 
         // Late arrivals (after 9:05 AM, last 30 days)
-        const lateArrivals = db.prepare(`
+        let lateQuery = `
       SELECT COUNT(*) as count
-      FROM attendance
+      FROM attendance a
+      JOIN users u ON a.user_id = u.id
       WHERE clock_in > '09:05:00'
-        AND date >= date('now', '-30 days')
-    `).get();
+        AND a.date >= date('now', '-30 days')
+    `;
+        const lateParams = [];
+        if (branch) {
+            lateQuery += " AND u.branch = ?";
+            lateParams.push(branch);
+        }
+        const lateArrivals = db.prepare(lateQuery).get(...lateParams);
 
         res.json({
             totalStaff: totalStaff.count,

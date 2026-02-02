@@ -7,7 +7,7 @@ const router = express.Router();
 // Get schedules
 router.get('/', authMiddleware, (req, res) => {
     try {
-        const { start_date, end_date, user_id } = req.query;
+        const { start_date, end_date, user_id, branch } = req.query;
 
         let query = `
       SELECT s.*, u.name as user_name, u.role as user_role
@@ -32,6 +32,10 @@ router.get('/', authMiddleware, (req, res) => {
             query += ' AND s.date <= ?';
             params.push(end_date);
         }
+        if (branch) {
+            query += ' AND s.branch = ?';
+            params.push(branch);
+        }
 
         query += ' ORDER BY s.date ASC, s.start_time ASC';
 
@@ -53,9 +57,9 @@ router.post('/', authMiddleware, requireRole('admin'), (req, res) => {
         }
 
         const result = db.prepare(`
-      INSERT INTO schedules (user_id, date, start_time, end_time, shift_type, notes, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(user_id, date, start_time, end_time, shift_type, notes, req.user.id);
+      INSERT INTO schedules (user_id, date, start_time, end_time, shift_type, notes, created_by, branch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(user_id, date, start_time, end_time, shift_type, notes, req.user.id, req.body.branch || 'betfalme');
 
         const schedule = db.prepare('SELECT * FROM schedules WHERE id = ?').get(result.lastInsertRowid);
         res.status(201).json(schedule);
@@ -78,8 +82,8 @@ router.post('/bulk', authMiddleware, requireRole('admin'), (req, res) => {
         }
 
         const stmt = db.prepare(`
-      INSERT INTO schedules (user_id, date, start_time, end_time, shift_type, notes, created_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO schedules (user_id, date, start_time, end_time, shift_type, notes, created_by, branch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
         const insertMany = db.transaction((schedules) => {
@@ -91,7 +95,8 @@ router.post('/bulk', authMiddleware, requireRole('admin'), (req, res) => {
                     schedule.end_time,
                     schedule.shift_type || null,
                     schedule.notes || null,
-                    req.user.id
+                    req.user.id,
+                    schedule.branch || 'betfalme'
                 );
             }
         });
@@ -154,13 +159,21 @@ router.delete('/:id', authMiddleware, requireRole('admin'), (req, res) => {
 // Delete schedules by range (Admin only) - For Rota Overwrite
 router.delete('/range/bulk', authMiddleware, requireRole('admin'), (req, res) => {
     try {
-        const { start_date, end_date } = req.body;
+        const { start_date, end_date, branch } = req.body;
 
         if (!start_date || !end_date) {
             return res.status(400).json({ error: 'start_date and end_date are required' });
         }
 
-        const result = db.prepare('DELETE FROM schedules WHERE date >= ? AND date <= ?').run(start_date, end_date);
+        let deleteQuery = 'DELETE FROM schedules WHERE date >= ? AND date <= ?';
+        const deleteParams = [start_date, end_date];
+
+        if (branch) {
+            deleteQuery += ' AND branch = ?';
+            deleteParams.push(branch);
+        }
+
+        const result = db.prepare(deleteQuery).run(...deleteParams);
 
         res.json({ message: `Deleted ${result.changes} schedules in range` });
     } catch (error) {

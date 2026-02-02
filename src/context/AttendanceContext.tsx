@@ -63,7 +63,7 @@ export const useAttendance = () => {
 };
 
 export const AttendanceProvider = ({ children }: { children: ReactNode }) => {
-    const { user } = useAuth();
+    const { user, selectedBranch } = useAuth();
     const [records, setRecords] = useState<AttendanceRecord[]>([]);
     const [allStaffRecords, setAllStaffRecords] = useState<AttendanceRecord[]>([]);
     const [summary, setSummary] = useState<AttendanceSummary | null>(null);
@@ -94,9 +94,10 @@ export const AttendanceProvider = ({ children }: { children: ReactNode }) => {
         setLoading(true);
         try {
             if (user.role === 'admin') {
+                const params = { branch: selectedBranch };
                 const [allRes, summRes] = await Promise.all([
-                    attendanceAPI.getAll(),
-                    attendanceAPI.getSummary()
+                    attendanceAPI.getAll(params),
+                    attendanceAPI.getSummary(params)
                 ]);
                 setAllStaffRecords(allRes.data.map(mapRecord));
                 setSummary(summRes.data);
@@ -109,7 +110,7 @@ export const AttendanceProvider = ({ children }: { children: ReactNode }) => {
         } finally {
             setLoading(false);
         }
-    }, [user]);
+    }, [user, selectedBranch]);
 
     useEffect(() => {
         refreshData();

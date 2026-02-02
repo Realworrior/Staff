@@ -7,9 +7,28 @@ import { schedulesAPI } from '../services/api';
 import { clsx } from 'clsx';
 import { format, addDays } from 'date-fns';
 
+// Helper for unique staff colors - minimalist border-only style
+const getStaffColor = (name: string) => {
+    const colors = [
+        'border-fuchsia-500/50 text-fuchsia-700 dark:text-fuchsia-300 bg-fuchsia-50/30 dark:bg-fuchsia-900/10',
+        'border-emerald-500/50 text-emerald-700 dark:text-emerald-300 bg-emerald-50/30 dark:bg-emerald-900/10',
+        'border-sky-500/50 text-sky-700 dark:text-sky-300 bg-sky-50/30 dark:bg-sky-900/10',
+        'border-orange-500/50 text-orange-700 dark:text-orange-300 bg-orange-50/30 dark:bg-orange-900/10',
+        'border-violet-500/50 text-violet-700 dark:text-violet-300 bg-violet-50/30 dark:bg-violet-900/10',
+        'border-rose-500/50 text-rose-700 dark:text-rose-300 bg-rose-50/30 dark:bg-rose-900/10',
+        'border-amber-500/50 text-amber-700 dark:text-amber-300 bg-amber-50/30 dark:bg-amber-900/10',
+        'border-blue-500/50 text-blue-700 dark:text-blue-300 bg-blue-50/30 dark:bg-blue-900/10',
+        'border-teal-500/50 text-teal-700 dark:text-teal-300 bg-teal-50/30 dark:bg-teal-900/10',
+        'border-indigo-500/50 text-indigo-700 dark:text-indigo-300 bg-indigo-50/30 dark:bg-indigo-900/10',
+    ];
+    let hash = 0;
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+    return colors[Math.abs(hash) % colors.length];
+};
+
 export const Dashboard = () => {
-    const { user } = useAuth();
-    const { isCheckedIn, clockIn, clockOut, currentSession, loading, summary, isWithinRange } = useAttendance();
+    const { user, selectedBranch } = useAuth();
+    const { isCheckedIn, clockIn, clockOut, currentSession, loading, summary, isWithinRange, refreshData } = useAttendance();
     const navigate = useNavigate();
     const [upcomingShifts, setUpcomingShifts] = useState<any[]>([]);
     const [loadingShift, setLoadingShift] = useState(false);
@@ -28,6 +47,13 @@ export const Dashboard = () => {
         }
     };
 
+    // Refresh attendance summary when branch changes
+    useEffect(() => {
+        if (isAdmin) {
+            refreshData();
+        }
+    }, [selectedBranch, isAdmin, refreshData]);
+
     useEffect(() => {
         if (!isAdmin && user) {
             const fetchUpcomingWeek = async () => {
@@ -38,7 +64,8 @@ export const Dashboard = () => {
 
                     const response = await schedulesAPI.getAll({
                         start_date: format(start, 'yyyy-MM-dd'),
-                        end_date: format(end, 'yyyy-MM-dd')
+                        end_date: format(end, 'yyyy-MM-dd'),
+                        branch: selectedBranch
                     });
 
                     const allShifts = response.data;
@@ -54,10 +81,7 @@ export const Dashboard = () => {
 
                             return {
                                 ...shift,
-                                colleagues,
-                                shift_time: shift.shift_type === 'AM' ? '07:30 - 15:30' :
-                                    shift.shift_type === 'PM' ? '15:30 - 22:30' :
-                                        '22:30 - 07:30'
+                                colleagues
                             };
                         })
                         .sort((a: any, b: any) => new Date(a.date).getTime() - new Date(b.date).getTime());
@@ -71,7 +95,7 @@ export const Dashboard = () => {
             };
             fetchUpcomingWeek();
         }
-    }, [isAdmin, user]);
+    }, [isAdmin, user, selectedBranch]);
 
     return (
         <div className="space-y-8 max-w-6xl mx-auto">
@@ -82,7 +106,7 @@ export const Dashboard = () => {
                         Welcome back, {user?.name.split(' ')[0]}!
                     </h1>
                     <p className="text-[rgb(var(--text-secondary))] mt-1">
-                        Here's your overview for <span className="font-medium text-[rgb(var(--accent-primary))]">{format(new Date(), 'EEEE, MMMM do')}</span>.
+                        Here's your overview for <span className="font-medium text-[rgb(var(--accent-primary))]">{format(new Date(), 'EEEE, MMMM do')}</span> at <span className="underline decoration-accent-primary underline-offset-4">{selectedBranch === 'betfalme' ? 'Betfalme' : 'Sofa/Safi'}</span>.
                     </p>
                 </div>
                 {!isAdmin && (
@@ -106,7 +130,7 @@ export const Dashboard = () => {
                             <span className="text-sm font-semibold text-[rgb(var(--text-secondary))]">Workforce</span>
                         </div>
                         <p className="text-3xl font-bold text-[rgb(var(--text-primary))]">{summary?.totalStaff || 0}</p>
-                        <p className="text-xs text-[rgb(var(--text-tertiary))] mt-1">Active Staff Members</p>
+                        <p className="text-xs text-[rgb(var(--text-tertiary))] mt-1">Active Staff Members ({selectedBranch})</p>
                     </div>
 
                     <div className="bg-[rgb(var(--bg-secondary))] p-4 md:p-6 rounded-2xl shadow-sm border border-[rgb(var(--border-color))]">
@@ -174,13 +198,13 @@ export const Dashboard = () => {
                         </div>
                     </div>
 
-                    {/* Monthly Roster Quick Access (Slot 2) - SWAPPED HERE */}
+                    {/* Monthly Roster Quick Access */}
                     <div className="bg-[rgb(var(--bg-secondary))] p-4 md:p-6 rounded-2xl shadow-sm border border-[rgb(var(--border-color))] relative overflow-hidden group flex flex-col justify-between">
                         <div className="absolute -top-4 -right-4 w-32 h-32 bg-emerald-500/5 rounded-full -z-0" />
                         <div className="relative z-10">
                             <h3 className="text-[rgb(var(--text-secondary))] text-sm font-semibold mb-1 uppercase tracking-wider">Monthly Roster</h3>
                             <p className="text-sm text-[rgb(var(--text-secondary))] mt-3 leading-relaxed">
-                                Access the complete staff schedule and coverage plan for the current month.
+                                Access the complete staff schedule and coverage plan for {selectedBranch === 'betfalme' ? 'Betfalme' : 'Sofa/Safi'} Office.
                             </p>
                         </div>
 
@@ -224,7 +248,7 @@ export const Dashboard = () => {
                             </div>
                             <div>
                                 <h3 className="text-lg font-bold text-[rgb(var(--text-primary))]">Shift Journey</h3>
-                                <p className="text-xs text-[rgb(var(--text-secondary))]">Your next 7 upcoming shifts</p>
+                                <p className="text-xs text-[rgb(var(--text-secondary))]">Your next 7 upcoming shifts ({selectedBranch})</p>
                             </div>
                         </div>
                         <button
@@ -249,47 +273,37 @@ export const Dashboard = () => {
                                     <div key={idx} className="flex items-center shrink-0">
                                         {/* Train Cart */}
                                         <div className={clsx(
-                                            "min-w-[260px] p-5 rounded-2xl border-t-4 shadow-md flex flex-col gap-4 transition-transform hover:scale-[1.02]",
-                                            shift.shift_type === 'AM' ? 'bg-amber-50/50 border-amber-500 dark:bg-amber-900/10' :
-                                                shift.shift_type === 'PM' ? 'bg-rose-50/50 border-rose-500 dark:bg-rose-900/10' :
-                                                    'bg-indigo-50/50 border-indigo-500 dark:bg-indigo-900/10'
+                                            "min-w-[260px] p-5 rounded-2xl border-t-0 border-l-[0.5px] shadow-md flex flex-col gap-4 transition-transform hover:scale-[1.02] bg-white dark:bg-white/5",
+                                            shift.shift_type === 'AM' ? 'border-green-500' :
+                                                shift.shift_type === 'PM' ? 'border-red-500' :
+                                                    'border-blue-500'
                                         )}>
                                             <div className="flex justify-between items-start">
                                                 <div>
-                                                    <p className="text-xs font-black uppercase tracking-widest opacity-60">{format(new Date(shift.date), 'EEEE')}</p>
+                                                    <p className="text-xs font-black uppercase tracking-widest opacity-60 text-[rgb(var(--text-primary))]">{format(new Date(shift.date), 'EEEE')}</p>
                                                     <h4 className="text-xl font-extrabold text-[rgb(var(--text-primary))]">{format(new Date(shift.date), 'MMM do')}</h4>
                                                 </div>
                                                 <span className={clsx(
-                                                    "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest",
-                                                    shift.shift_type === 'AM' ? 'bg-amber-100 text-amber-700' :
-                                                        shift.shift_type === 'PM' ? 'bg-rose-100 text-rose-700' :
-                                                            'bg-indigo-100 text-indigo-700'
+                                                    "px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest bg-gray-100 dark:bg-white/10 text-[rgb(var(--text-primary))]"
                                                 )}>
                                                     {shift.shift_type}
                                                 </span>
                                             </div>
 
-                                            <div className="flex items-center gap-2 py-2 bg-[rgb(var(--bg-primary))]/50 rounded-xl px-3 border border-white/5 shadow-inner">
-                                                <Clock size={16} className="text-[rgb(var(--text-secondary))]" />
-                                                <span className="text-sm font-bold font-mono">{shift.shift_time}</span>
-                                            </div>
+                                            <div className="h-2" /> {/* Spacer */}
 
                                             {/* Colleagues */}
                                             {shift.colleagues.length > 0 && (
-                                                <div className="mt-auto">
-                                                    <p className="text-[9px] font-black uppercase tracking-widest opacity-50 mb-2 flex items-center gap-1">
-                                                        <Users size={12} /> Working With
-                                                    </p>
-                                                    {shift.colleagues.map((col: any) => (
-                                                        <div key={col.id} className="flex items-center gap-1.5 bg-[rgb(var(--bg-primary))]/40 px-2 py-1 rounded-lg border border-[rgb(var(--border-color))] shadow-sm" title={col.user_name}>
-                                                            <div className="w-5 h-5 rounded-full bg-[rgb(var(--accent-primary))] flex items-center justify-center text-[8px] font-black text-white shrink-0">
-                                                                {col.user_name?.charAt(0)}
+                                                <div className="mt-auto pt-2 border-t border-[rgb(var(--border-color))]">
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {shift.colleagues.map((col: any) => (
+                                                            <div key={col.id} className={clsx("flex items-center gap-1.5 px-2 py-1 rounded-lg border shadow-sm", getStaffColor(col.user_name || ''))} title={col.user_name}>
+                                                                <span className="text-[10px] font-bold truncate max-w-[80px]">
+                                                                    {col.user_name}
+                                                                </span>
                                                             </div>
-                                                            <span className="text-[10px] font-bold text-[rgb(var(--text-primary))] truncate max-w-[100px]">
-                                                                {col.user_name}
-                                                            </span>
-                                                        </div>
-                                                    ))}
+                                                        ))}
+                                                    </div>
                                                 </div>
                                             )}
                                         </div>

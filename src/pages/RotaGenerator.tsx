@@ -1,25 +1,33 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Download, RefreshCw, AlertCircle, CheckCircle, Save, Loader2 } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Download, RefreshCw, AlertCircle, CheckCircle, Save, Loader2, Upload } from 'lucide-react';
 import { generateRota } from '../utils/rotaGenerator';
 import type { RotaEmployee, DailySchedule, ShiftType } from '../types/rota';
 import { format, startOfMonth, addMonths, endOfMonth, eachDayOfInterval } from 'date-fns';
 import { clsx } from 'clsx';
 import { useAuth, type User } from '../context/AuthContext';
 import { schedulesAPI } from '../services/api';
+import Papa from 'papaparse';
 
 export const RotaGenerator = () => {
-    const { users } = useAuth();
+    const { users, selectedBranch: globalBranch } = useAuth();
     const [employees, setEmployees] = useState<RotaEmployee[]>([]);
     const [schedule, setSchedule] = useState<DailySchedule[]>([]);
     const [startDate, setStartDate] = useState(format(startOfMonth(addMonths(new Date(), 1)), 'yyyy-MM-dd'));
     const [generated, setGenerated] = useState(false);
     const [saving, setSaving] = useState(false);
+    const [loadingExisting, setLoadingExisting] = useState(false);
     const [saveSuccess, setSaveSuccess] = useState(false);
+    const [selectedBranch, setSelectedBranch] = useState<string>(globalBranch);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // Sync local branch when global branch changes
+    useEffect(() => {
+        setSelectedBranch(globalBranch);
+    }, [globalBranch]);
     // Sync employees with users from AuthContext
     useEffect(() => {
         const staffUsers = users
-            .filter((u: User) => u.role !== 'admin' && u.role !== 'supervisor') // Strict exclusion
+            .filter((u: User) => u.role !== 'admin' && u.role !== 'supervisor' && u.branch === selectedBranch) // Filter by branch
             .map((u: User) => ({
                 id: u.id,
                 name: u.name,
@@ -27,7 +35,7 @@ export const RotaGenerator = () => {
                 avatar: u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=10B981&color=fff`
             }));
         setEmployees(staffUsers);
-    }, [users]);
+    }, [users, selectedBranch]);
 
     const handleGenerate = () => {
         if (employees.length === 0) {
@@ -49,13 +57,14 @@ export const RotaGenerator = () => {
         const fetchExistingRota = async () => {
             if (employees.length === 0) return;
 
-            setSaving(true); // Reusing saving spinner state for loading
+            setLoadingExisting(true);
             try {
                 const start = new Date(startDate);
                 const end = endOfMonth(start);
                 const params = {
                     start_date: format(start, 'yyyy-MM-dd'),
-                    end_date: format(end, 'yyyy-MM-dd')
+                    end_date: format(end, 'yyyy-MM-dd'),
+                    branch: selectedBranch
                 };
 
                 const response = await schedulesAPI.getAll(params);
@@ -104,7 +113,7 @@ export const RotaGenerator = () => {
             } catch (error) {
                 console.error("Failed to load existing rota", error);
             } finally {
-                setSaving(false);
+                setLoadingExisting(false);
             }
         };
 
@@ -114,7 +123,7 @@ export const RotaGenerator = () => {
 
         return () => clearTimeout(timeoutId);
 
-    }, [startDate, employees.length]); // Depend on employees being loaded
+    }, [startDate, employees.length, selectedBranch]); // Depend on branch change
 
     const handleSave = async () => {
         if (schedule.length === 0) return;
@@ -133,7 +142,8 @@ export const RotaGenerator = () => {
 
             await schedulesAPI.deleteRange({
                 start_date: format(minDate, 'yyyy-MM-dd'),
-                end_date: format(maxDate, 'yyyy-MM-dd')
+                end_date: format(maxDate, 'yyyy-MM-dd'),
+                branch: selectedBranch
             });
 
             // 2. Insert New
@@ -149,6 +159,7 @@ export const RotaGenerator = () => {
                             start_time: start,
                             end_time: end,
                             shift_type: type,
+                            branch: selectedBranch,
                             notes: 'Generated Rota'
                         });
                     });
@@ -170,12 +181,142 @@ export const RotaGenerator = () => {
         }
     };
 
+    const handleExportCSV = () => {
+        if (schedule.length === 0) return;
+
+        const staffNames = employees.map(e => e.name);
+        const headers = ['Date', ...staffNames, 'Coverage (A/P/N)'];
+
+        const rows = schedule.map(day => {
+            const staffAssignments = staffNames.map(name => {
+                const emp = employees.find(e => e.name === name);
+                if (!emp) return 'OFF';
+
+                if (day.assignments.AM.find(e => e.id === emp.id)) return 'AM';
+                if (day.assignments.PM.find(e => e.id === emp.id)) return 'PM';
+                if (day.assignments.NT.find(e => e.id === emp.id)) return 'NT';
+                return 'OFF';
+            });
+
+            const coverage = `${day.assignments.AM.length}/${day.assignments.PM.length}/${day.assignments.NT.length}`;
+            return [day.date, ...staffAssignments, coverage];
+        });
+
+        const csvContent = [
+            headers.join(','),
+            ...rows.map(row => row.join(','))
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `rota_${selectedBranch}_${format(new Date(startDate), 'yyyy_MM')}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    const handleImportCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        Papa.parse(file, {
+            header: true,
+            skipEmptyLines: true,
+            complete: (results) => {
+                const data = results.data as Record<string, string>[];
+                if (data.length === 0) {
+                    alert('No data found in CSV');
+                    return;
+                }
+
+                try {
+                    // Detect if this is a supported format
+                    // Needs 'Date' and staff names
+                    const headers = results.meta.fields || [];
+                    if (!headers.includes('Date')) {
+                        alert('CSV must have a "Date" column');
+                        return;
+                    }
+
+                    const importedSchedule: DailySchedule[] = [];
+
+                    data.forEach(row => {
+                        const dateStr = row['Date'];
+                        if (!dateStr || !isValidDate(dateStr)) return;
+
+                        const assignments = {
+                            AM: [] as RotaEmployee[],
+                            PM: [] as RotaEmployee[],
+                            NT: [] as RotaEmployee[],
+                            OFF: [] as RotaEmployee[]
+                        };
+
+                        // Iterate through employees to find their assignment in this row
+                        employees.forEach(emp => {
+                            // Find column matching employee name
+                            const colName = headers.find(h => h.trim().toLowerCase() === emp.name.toLowerCase());
+                            if (colName) {
+                                const val = row[colName]?.trim().toUpperCase();
+                                if (val === 'AM') assignments.AM.push(emp);
+                                else if (val === 'PM') assignments.PM.push(emp);
+                                else if (val === 'NT') assignments.NT.push(emp);
+                                else assignments.OFF.push(emp);
+                            } else {
+                                // Default OFF if not in CSV or name mismatch
+                                assignments.OFF.push(emp);
+                            }
+                        });
+
+
+                        importedSchedule.push({
+                            date: dateStr,
+                            assignments,
+                            warnings: []
+                        });
+                    });
+
+                    if (importedSchedule.length > 0) {
+                        // Sort by date
+                        importedSchedule.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+                        setSchedule(importedSchedule);
+                        setStartDate(importedSchedule[0].date); // Set view to start of imported data
+                        setGenerated(true);
+                        setSaveSuccess(false); // Mark as unsaved so user knows to click save
+                        alert(`Successfully imported ${importedSchedule.length} days of rota! Please review and click "Save to Database".`);
+                    } else {
+                        alert('Could not parse any valid schedule data.');
+                    }
+
+                } catch (err) {
+                    console.error('Import error:', err);
+                    alert('Failed to process CSV data.');
+                }
+
+                // Reset input
+                if (fileInputRef.current) fileInputRef.current.value = '';
+            }
+        });
+    };
+
+    const isValidDate = (dateString: string) => {
+        const regEx = /^\d{4}-\d{2}-\d{2}$/;
+        if (!dateString.match(regEx)) return false;  // Invalid format
+        const d = new Date(dateString);
+        const dNum = d.getTime();
+        if (!dNum && dNum !== 0) return false; // NaN value, invalid date
+        return d.toISOString().slice(0, 10) === dateString;
+    }
+
     const getShiftColor = (type: string) => {
         switch (type) {
-            case 'AM': return 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-900/50';
-            case 'PM': return 'bg-orange-100 text-orange-700 border-orange-200 dark:bg-orange-900/30 dark:text-orange-400 dark:border-orange-900/50';
-            case 'NT': return 'bg-purple-100 text-purple-700 border-purple-200 dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-900/50';
-            default: return 'bg-[rgb(var(--bg-tertiary))] text-[rgb(var(--text-tertiary))] border-[rgb(var(--border-color))]';
+            case 'AM': return 'bg-white text-green-600 border-l-[0.5px] border-green-500 font-bold';
+            case 'PM': return 'bg-white text-red-600 border-l-[0.5px] border-red-500 font-bold';
+            case 'NT': return 'bg-white text-blue-600 border-l-[0.5px] border-blue-500 font-bold';
+            case 'OFF': return 'bg-gray-50 text-gray-400 border-gray-100 dark:bg-gray-800/20 dark:text-gray-500 dark:border-gray-800/50';
+            default: return 'bg-white text-gray-400 border-gray-100';
         }
     };
 
@@ -198,10 +339,10 @@ export const RotaGenerator = () => {
         }));
 
         schedule.forEach(day => {
-            day.assignments.AM.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id)!; s.AM++; s.Total++; });
-            day.assignments.PM.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id)!; s.PM++; s.Total++; });
-            day.assignments.NT.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id)!; s.NT++; s.Total++; });
-            day.assignments.OFF.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id)!; s.OFF++; });
+            day.assignments.AM.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id); if (s) { s.AM++; s.Total++; } });
+            day.assignments.PM.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id); if (s) { s.PM++; s.Total++; } });
+            day.assignments.NT.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id); if (s) { s.NT++; s.Total++; } });
+            day.assignments.OFF.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id); if (s) { s.OFF++; } });
         });
 
         // Calculate variance (fairness)
@@ -257,7 +398,25 @@ export const RotaGenerator = () => {
                     <p className="text-[rgb(var(--text-secondary))]">Automated 5-2 cycle generation with fairness balancing</p>
                 </div>
                 <div className="flex gap-2">
-                    <button className="flex items-center gap-2 px-4 py-2 bg-[rgb(var(--bg-secondary))] border border-[rgb(var(--border-color))] text-[rgb(var(--text-primary))] rounded-lg hover:bg-[rgb(var(--bg-tertiary))] transition-colors">
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        accept=".csv"
+                        onChange={handleImportCSV}
+                        className="hidden"
+                    />
+                    <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="flex items-center gap-2 px-4 py-2 bg-[rgb(var(--bg-secondary))] border border-[rgb(var(--border-color))] text-[rgb(var(--text-primary))] rounded-lg hover:bg-[rgb(var(--bg-tertiary))] transition-colors"
+                    >
+                        <Upload size={18} />
+                        <span>Import CSV</span>
+                    </button>
+                    <button
+                        onClick={handleExportCSV}
+                        disabled={schedule.length === 0}
+                        className="flex items-center gap-2 px-4 py-2 bg-[rgb(var(--bg-secondary))] border border-[rgb(var(--border-color))] text-[rgb(var(--text-primary))] rounded-lg hover:bg-[rgb(var(--bg-tertiary))] transition-colors disabled:opacity-50"
+                    >
                         <Download size={18} />
                         <span>Export CSV</span>
                     </button>
@@ -298,7 +457,7 @@ export const RotaGenerator = () => {
                     </div>
                     <button
                         onClick={handleGenerate}
-                        disabled={saving}
+                        disabled={saving || loadingExisting}
                         className="flex items-center gap-2 bg-[rgb(var(--accent-primary))] text-white px-8 py-2.5 rounded-xl font-bold hover:bg-[rgb(var(--accent-hover))] transition-all w-full md:w-auto justify-center shadow-lg shadow-emerald-200 dark:shadow-none"
                     >
                         <RefreshCw size={20} className={generated ? "" : "animate-spin-slow"} />

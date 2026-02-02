@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { TrendingUp, Users, Filter, CheckCircle, Clock, DollarSign } from 'lucide-react';
 import { clsx } from 'clsx';
 import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, subDays } from 'date-fns';
 import { payrollAPI } from '../services/api';
+import { useAuth } from '../context/AuthContext';
 
 interface PayrollCalculation {
     userId: number;
@@ -27,6 +28,7 @@ interface PayrollRecord {
 }
 
 export const Payroll = () => {
+    const { users, selectedBranch } = useAuth();
     const [view, setView] = useState<'calculate' | 'history'>('calculate');
     const [startDate, setStartDate] = useState(format(startOfWeek(new Date()), 'yyyy-MM-dd'));
     const [endDate, setEndDate] = useState(format(endOfWeek(new Date()), 'yyyy-MM-dd'));
@@ -34,37 +36,42 @@ export const Payroll = () => {
     const [history, setHistory] = useState<PayrollRecord[]>([]);
     const [loading, setLoading] = useState(false);
 
-    useEffect(() => {
-        if (view === 'calculate') {
-            fetchCalculations();
-        } else {
-            fetchHistory();
-        }
-    }, [view, startDate, endDate]);
-
-    const fetchCalculations = async () => {
+    const fetchCalculations = useCallback(async () => {
         setLoading(true);
         try {
-            const response = await payrollAPI.calculate({ startDate, endDate });
+            const response = await payrollAPI.calculate({ startDate, endDate, branch: selectedBranch });
             setCalculations(response.data);
         } catch (err) {
             console.error('Failed to fetch calculations:', err);
         } finally {
             setLoading(false);
         }
-    };
+    }, [startDate, endDate, selectedBranch]);
 
-    const fetchHistory = async () => {
+    const fetchHistory = useCallback(async () => {
         setLoading(true);
         try {
             const response = await payrollAPI.getHistory();
-            setHistory(response.data);
+            // Filter history by branch on frontend since history backend join is already there
+            const filteredHistory = response.data.filter((record: any) => {
+                const recordUser = users.find(u => u.id.toString() === record.user_id.toString());
+                return recordUser && recordUser.branch === selectedBranch;
+            });
+            setHistory(filteredHistory);
         } catch (err) {
             console.error('Failed to fetch history:', err);
         } finally {
             setLoading(false);
         }
-    };
+    }, [selectedBranch, users]);
+
+    useEffect(() => {
+        if (view === 'calculate') {
+            fetchCalculations();
+        } else {
+            fetchHistory();
+        }
+    }, [view, fetchCalculations, fetchHistory]);
 
     const handleLogAsPending = async (calc: PayrollCalculation) => {
         try {
@@ -114,8 +121,8 @@ export const Payroll = () => {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl font-bold text-[rgb(var(--text-primary))]">Payroll & Transport</h1>
-                    <p className="text-[rgb(var(--text-secondary))]">
-                        Manage transportation allowances (PM & NT shifts)
+                    <p className="text-[rgb(var(--text-secondary))] underline decoration-accent-primary decoration-2 underline-offset-4">
+                        Office: {selectedBranch === 'betfalme' ? 'Betfalme' : 'Sofa/Safi'}
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
@@ -136,7 +143,7 @@ export const Payroll = () => {
                                 view === 'history' ? "bg-[rgb(var(--accent-primary))] text-white shadow-sm" : "text-[rgb(var(--text-secondary))] hover:text-[rgb(var(--text-primary))]"
                             )}
                         >
-                            Milestones
+                            History
                         </button>
                     </div>
                 </div>
@@ -180,7 +187,7 @@ export const Payroll = () => {
                             <TrendingUp size={24} />
                         </div>
                         <div>
-                            <p className="text-sm font-medium text-[rgb(var(--text-secondary))]">Estimated Transport</p>
+                            <p className="text-sm font-medium text-[rgb(var(--text-secondary))]">Est. Transport</p>
                             <h3 className="text-2xl font-black text-[rgb(var(--text-primary))]">KES {totalCalculated.toLocaleString()}</h3>
                         </div>
                     </div>
@@ -192,7 +199,7 @@ export const Payroll = () => {
                             <DollarSign size={24} />
                         </div>
                         <div>
-                            <p className="text-sm font-medium text-[rgb(var(--text-secondary))]">Grand Total (Staff)</p>
+                            <p className="text-sm font-medium text-[rgb(var(--text-secondary))]">Total (Staff)</p>
                             <h3 className="text-2xl font-black text-[rgb(var(--accent-primary))]">KES {totalCalculated.toLocaleString()}</h3>
                         </div>
                     </div>
@@ -205,7 +212,7 @@ export const Payroll = () => {
                         </div>
                         <div>
                             <p className="text-sm font-medium text-[rgb(var(--text-secondary))]">Paid Milestones</p>
-                            <h3 className="text-2xl font-black text-[rgb(var(--text-primary))]">{paidHistoryCount} Records</h3>
+                            <h3 className="text-2xl font-black text-[rgb(var(--text-primary))]">{paidHistoryCount}</h3>
                         </div>
                     </div>
                 </div>
@@ -217,7 +224,7 @@ export const Payroll = () => {
                         </div>
                         <div>
                             <p className="text-sm font-medium text-[rgb(var(--text-secondary))]">Staff Eligible</p>
-                            <h3 className="text-2xl font-black text-[rgb(var(--text-primary))]">{calculations.length} Active</h3>
+                            <h3 className="text-2xl font-black text-[rgb(var(--text-primary))]">{calculations.length}</h3>
                         </div>
                     </div>
                 </div>
@@ -227,7 +234,7 @@ export const Payroll = () => {
             <div className="bg-[rgb(var(--bg-secondary))] rounded-2xl shadow-sm border border-[rgb(var(--border-color))] overflow-hidden">
                 <div className="p-6 border-b border-[rgb(var(--border-color))] flex justify-between items-center">
                     <h2 className="text-lg font-bold text-[rgb(var(--text-primary))]">
-                        {view === 'calculate' ? `Calculation: ${format(new Date(startDate), 'MMM d')} - ${format(new Date(endDate), 'MMM d, yyyy')}` : 'Payment Milestones'}
+                        {view === 'calculate' ? `Calculation: ${format(new Date(startDate), 'MMM d')} - ${format(new Date(endDate), 'MMM d, yyyy')}` : 'Payment History'}
                     </h2>
                     {loading && <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-[rgb(var(--accent-primary))]" />}
                 </div>
@@ -250,7 +257,7 @@ export const Payroll = () => {
                                         <td className="px-6 py-4">
                                             <div className="flex flex-col">
                                                 <span className="font-bold text-[rgb(var(--text-primary))]">{calc.name}</span>
-                                                <span className="text-xs text-[rgb(var(--text-tertiary))]">{calc.role}</span>
+                                                <span className="text-xs text-[rgb(var(--text-tertiary))] capitalize">{calc.role}</span>
                                             </div>
                                         </td>
                                         <td className="px-6 py-4 text-right font-mono text-[rgb(var(--text-secondary))]">KES {calc.transportAllowance}</td>
@@ -294,7 +301,7 @@ export const Payroll = () => {
                                         <td className="px-6 py-4 text-center">
                                             <div className={clsx(
                                                 "inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest",
-                                                record.status === 'paid' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700"
+                                                record.status === 'paid' ? "bg-emerald-100 text-emerald-700" : "bg-amber-100 text-amber-700 font-bold"
                                             )}>
                                                 {record.status === 'paid' ? <CheckCircle size={10} /> : <Clock size={10} />}
                                                 {record.status}

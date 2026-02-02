@@ -5,7 +5,7 @@ import { clsx } from 'clsx';
 import { format } from 'date-fns';
 
 export const Attendance = () => {
-    const { user } = useAuth();
+    const { user, selectedBranch, users } = useAuth();
     const {
         isCheckedIn,
         clockIn,
@@ -32,11 +32,21 @@ export const Attendance = () => {
     };
 
     if (isAdmin) {
+        // Filter records for the selected branch
+        const filteredRecords = allStaffRecords.filter(record => {
+            const recordUser = users.find(u => u.name === record.userName);
+            return recordUser && recordUser.branch === selectedBranch;
+        });
+
         return (
             <div className="space-y-6 max-w-6xl mx-auto">
-                <div>
-                    <h1 className="text-2xl font-bold text-[rgb(var(--text-primary))]">Attendance Overview</h1>
-                    <p className="text-[rgb(var(--text-secondary))]">Monitor staff attendance and performance metrics</p>
+                <div className="flex justify-between items-center">
+                    <div>
+                        <h1 className="text-2xl font-bold text-[rgb(var(--text-primary))]">Attendance Overview</h1>
+                        <p className="text-[rgb(var(--text-secondary))] underline decoration-accent-primary decoration-2 underline-offset-4">
+                            Office: {selectedBranch === 'betfalme' ? 'Betfalme' : 'Sofa/Safi'}
+                        </p>
+                    </div>
                 </div>
 
                 {/* Admin Summary Stats */}
@@ -85,11 +95,7 @@ export const Attendance = () => {
                 {/* Staff Attendance Table */}
                 <div className="bg-[rgb(var(--bg-secondary))] rounded-2xl shadow-sm border border-[rgb(var(--border-color))] overflow-hidden">
                     <div className="p-6 border-b border-[rgb(var(--border-color))] flex items-center justify-between">
-                        <h3 className="font-semibold text-[rgb(var(--text-primary))]">Recent Staff Activity</h3>
-                        <div className="flex gap-2">
-                            <button className="px-3 py-1 text-sm bg-[rgb(var(--bg-tertiary))] text-[rgb(var(--text-secondary))] rounded-lg">Filter</button>
-                            <button className="px-3 py-1 text-sm bg-[rgb(var(--accent-primary))] text-white rounded-lg">Export</button>
-                        </div>
+                        <h3 className="font-semibold text-[rgb(var(--text-primary))]">Recent Staff Activity ({selectedBranch})</h3>
                     </div>
                     <div className="overflow-x-auto">
                         <table className="w-full text-left">
@@ -104,7 +110,7 @@ export const Attendance = () => {
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-[rgb(var(--border-color))]">
-                                {allStaffRecords.map((record) => (
+                                {filteredRecords.map((record) => (
                                     <tr key={record.id} className="hover:bg-[rgb(var(--bg-tertiary))] transition-colors">
                                         <td className="px-6 py-4 font-medium text-[rgb(var(--text-primary))]">{record.userName}</td>
                                         <td className="px-6 py-4 text-[rgb(var(--text-secondary))]">{record.date}</td>
@@ -199,7 +205,6 @@ export const Attendance = () => {
                         </div>
                     )}
 
-                    {/* Location / Distance Debug Info */}
                     {!isCheckedIn && (
                         <div className={clsx(
                             "flex items-center gap-2 text-sm px-4 py-2 rounded-full",

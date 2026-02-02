@@ -10,10 +10,10 @@ router.get('/', authMiddleware, (req, res) => {
     try {
         let users;
         if (req.user.role === 'admin' || req.user.role === 'supervisor') {
-            users = db.prepare('SELECT id, username, name, email, role, avatar, transport_allowance, created_at FROM users').all();
+            users = db.prepare('SELECT id, username, name, email, role, branch, avatar, transport_allowance, created_at FROM users').all();
         } else {
             // Staff only see basic info for contact/chat
-            users = db.prepare('SELECT id, username, name, role, avatar FROM users').all();
+            users = db.prepare('SELECT id, username, name, role, branch, avatar FROM users').all();
         }
         res.json(users);
     } catch (error) {
@@ -25,7 +25,7 @@ router.get('/', authMiddleware, (req, res) => {
 // Create user (Admin only)
 router.post('/', authMiddleware, requireRole('admin'), (req, res) => {
     try {
-        const { username, password, name, email, role } = req.body;
+        const { username, password, name, email, role, branch } = req.body;
 
         if (!username || !password || !name || !role) {
             return res.status(400).json({ error: 'Username, password, name, and role are required' });
@@ -39,11 +39,11 @@ router.post('/', authMiddleware, requireRole('admin'), (req, res) => {
         const avatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=10B981&color=fff`;
 
         const result = db.prepare(`
-      INSERT INTO users (username, password_hash, name, email, role, avatar, transport_allowance)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(username.toLowerCase(), passwordHash, name, email || null, role, avatar, req.body.transport_allowance || 0);
+      INSERT INTO users (username, password_hash, name, email, role, avatar, transport_allowance, branch)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(username.toLowerCase(), passwordHash, name, email || null, role, avatar, req.body.transport_allowance || 0, branch || 'betfalme');
 
-        const newUser = db.prepare('SELECT id, username, name, email, role, avatar, transport_allowance, created_at FROM users WHERE id = ?').get(result.lastInsertRowid);
+        const newUser = db.prepare('SELECT id, username, name, email, role, branch, avatar, transport_allowance, created_at FROM users WHERE id = ?').get(result.lastInsertRowid);
 
         res.status(201).json(newUser);
     } catch (error) {
@@ -59,7 +59,7 @@ router.post('/', authMiddleware, requireRole('admin'), (req, res) => {
 router.put('/:id', authMiddleware, requireRole('admin'), (req, res) => {
     try {
         const { id } = req.params;
-        const { name, email, role, transport_allowance } = req.body;
+        const { name, email, role, transport_allowance, branch } = req.body;
 
         const user = db.prepare('SELECT id, role FROM users WHERE id = ?').get(id);
         if (!user) {
@@ -77,11 +77,12 @@ router.put('/:id', authMiddleware, requireRole('admin'), (req, res) => {
           email = COALESCE(?, email),
           role = COALESCE(?, role),
           transport_allowance = COALESCE(?, transport_allowance),
+          branch = COALESCE(?, branch),
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
-    `).run(name, email, role, transport_allowance, id);
+    `).run(name, email, role, transport_allowance, branch, id);
 
-        const updatedUser = db.prepare('SELECT id, username, name, email, role, avatar, transport_allowance, created_at FROM users WHERE id = ?').get(id);
+        const updatedUser = db.prepare('SELECT id, username, name, email, role, branch, avatar, transport_allowance, created_at FROM users WHERE id = ?').get(id);
         res.json(updatedUser);
     } catch (error) {
         console.error('Update user error:', error);

@@ -8,6 +8,7 @@ export interface User {
     username: string;
     name: string;
     role: UserRole;
+    branch: string;
     avatar?: string;
     transport_allowance?: number;
 }
@@ -24,6 +25,10 @@ interface AuthContextType {
     refreshUsers: () => Promise<void>;
     addUser: (user: any) => Promise<boolean>;
     deleteUser: (id: string) => Promise<boolean>;
+
+    // Branch Management
+    selectedBranch: string;
+    setSelectedBranch: (branch: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -35,6 +40,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [user, setUser] = useState<User | null>(null);
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
+    const [selectedBranch, setSelectedBranch] = useState<string>('betfalme');
 
     // Initial session check
     useEffect(() => {
@@ -42,7 +48,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const token = localStorage.getItem(TOKEN_KEY);
 
         if (storedUser && token) {
-            setUser(JSON.parse(storedUser));
+            const parsedUser = JSON.parse(storedUser);
+            setUser(parsedUser);
+            setSelectedBranch(parsedUser.branch || 'betfalme');
         }
         setLoading(false);
     }, []);
@@ -53,6 +61,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             refreshUsers();
         }
     }, [user]);
+
+    // Apply branch theme class to body
+    useEffect(() => {
+        const body = document.body;
+        // Remove all branch classes first
+        body.classList.forEach(cls => {
+            if (cls.startsWith('branch-')) {
+                body.classList.remove(cls);
+            }
+        });
+
+        // Add class for current branch
+        if (selectedBranch !== 'betfalme') {
+            body.classList.add(`branch-${selectedBranch}`);
+        }
+    }, [selectedBranch]);
 
     const refreshUsers = async () => {
         try {
@@ -71,6 +95,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             localStorage.setItem(TOKEN_KEY, token);
             localStorage.setItem(USER_KEY, JSON.stringify(userData));
             setUser(userData);
+            setSelectedBranch(userData.branch || 'betfalme');
             return true;
         } catch (error) {
             console.error('Login failed:', error);
@@ -116,7 +141,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             users,
             refreshUsers,
             addUser,
-            deleteUser
+            deleteUser,
+            selectedBranch,
+            setSelectedBranch
         }}>
             {children}
         </AuthContext.Provider>

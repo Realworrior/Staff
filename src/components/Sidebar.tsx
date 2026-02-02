@@ -14,7 +14,8 @@ import {
     Book,
     Sun,
     Moon,
-    Shield
+    Shield,
+    Building2
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useAuth } from '../context/AuthContext';
@@ -41,9 +42,14 @@ interface SidebarProps {
 }
 
 export const Sidebar = ({ isOpen, toggleSidebar }: SidebarProps) => {
-    const { user, logout } = useAuth();
+    const { user, logout, selectedBranch, setSelectedBranch } = useAuth();
     const { theme, toggleTheme } = useTheme();
     const activeRole = user?.role;
+
+    const branches = [
+        { id: 'betfalme', name: 'Betfalme Office', color: 'text-emerald-500' },
+        { id: 'sofa_safi', name: 'Sofa/Safi Office', color: 'text-blue-500' }
+    ];
 
     return (
         <>
@@ -65,14 +71,49 @@ export const Sidebar = ({ isOpen, toggleSidebar }: SidebarProps) => {
                     <div className="p-6 border-b border-[rgb(var(--border-color))] flex items-center justify-between">
                         <div className="flex items-center gap-2">
                             <div className="bg-[rgb(var(--accent-primary))] p-1.5 rounded-lg text-white">
-                                <Shield size={24} strokeWidth={2.5} />
+                                <Building2 size={24} strokeWidth={2.5} />
                             </div>
-                            <span className="font-bold text-xl tracking-tight text-[rgb(var(--text-primary))]">Falmebet</span>
+                            <span className="font-bold text-xl tracking-tight text-[rgb(var(--text-primary))]">StaffManager</span>
                         </div>
                         <button className="md:hidden text-[rgb(var(--text-primary))]" onClick={toggleSidebar}>
                             <Menu size={24} />
                         </button>
                     </div>
+
+                    {/* Branch Switcher (Admin/Supervisor Only) */}
+                    {(activeRole === 'admin' || activeRole === 'supervisor') && (
+                        <div className="px-4 py-4 border-b border-[rgb(var(--border-color))] bg-[rgb(var(--bg-primary))/50]">
+                            <label className="block text-[10px] font-bold text-[rgb(var(--text-tertiary))] uppercase tracking-wider mb-2 ml-1">
+                                Current Office
+                            </label>
+                            <div className="grid grid-cols-1 gap-1">
+                                {branches.map((branch) => (
+                                    <button
+                                        key={branch.id}
+                                        onClick={() => setSelectedBranch(branch.id)}
+                                        className={clsx(
+                                            "flex items-center justify-between px-3 py-2 rounded-lg text-sm transition-all border",
+                                            selectedBranch === branch.id
+                                                ? "bg-[rgb(var(--bg-secondary))] border-[rgb(var(--accent-primary))] shadow-sm"
+                                                : "bg-transparent border-transparent hover:bg-[rgb(var(--bg-tertiary))] text-[rgb(var(--text-secondary))]"
+                                        )}
+                                    >
+                                        <div className="flex items-center gap-2">
+                                            <div className={clsx("w-2 h-2 rounded-full", selectedBranch === branch.id ? "bg-[rgb(var(--accent-primary))]" : "bg-gray-400")} />
+                                            <span className={clsx("font-medium", selectedBranch === branch.id ? "text-[rgb(var(--text-primary))]" : "")}>
+                                                {branch.name}
+                                            </span>
+                                        </div>
+                                        {selectedBranch === branch.id && (
+                                            <div className="text-[rgb(var(--accent-primary))]">
+                                                <Shield size={14} />
+                                            </div>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
 
                     {/* Navigation */}
                     <nav className="flex-1 overflow-y-auto p-4 space-y-1">

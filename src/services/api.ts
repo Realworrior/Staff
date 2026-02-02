@@ -63,19 +63,19 @@ export const schedulesAPI = {
     bulkCreate: (schedules: any[]) => api.post('/schedules/bulk', { schedules }),
     update: (id: number, scheduleData: any) => api.put(`/schedules/${id}`, scheduleData),
     delete: (id: number) => api.delete(`/schedules/${id}`),
-    deleteRange: (data: { start_date: string, end_date: string }) => api.delete('/schedules/range/bulk', { data }),
+    deleteRange: (data: { start_date: string, end_date: string, branch: string }) => api.delete('/schedules/range/bulk', { data }),
 };
 
 // Account Logs API
 export const accountLogsAPI = {
-    getAll: () => api.get('/account-logs'),
+    getAll: (params?: any) => api.get('/account-logs', { params }),
     create: (logData: { phone_number: string; branch: string }) => api.post('/account-logs', logData),
     updateStatus: (id: number, status: 'open' | 'pending' | 'closed') => api.patch(`/account-logs/${id}`, { status }),
 };
 
 // Payroll API
 export const payrollAPI = {
-    calculate: (params: { startDate: string, endDate: string }) => api.get('/payroll/calculate', { params }),
+    calculate: (params: { startDate: string; endDate: string; branch?: string }) => api.get('/payroll/calculate', { params }),
     getHistory: () => api.get('/payroll/history'),
     createRecord: (data: { userId: number, startDate: string, endDate: string, totalTransport: number }) => api.post('/payroll/record', data),
     updateStatus: (id: number, status: 'pending' | 'paid') => api.patch(`/payroll/${id}/status`, { status }),

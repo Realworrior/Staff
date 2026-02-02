@@ -51,6 +51,25 @@
     /* emerald-900 */
   }
 
+  /* Sofa/Safi Branch Theme - Indigo Palette */
+  .branch-sofa_safi {
+    --accent-primary: 99 102 241;
+    /* indigo-500 */
+    --accent-hover: 79 70 229;
+    /* indigo-600 */
+    --accent-light: 238 242 255;
+    /* indigo-50 */
+  }
+
+  .dark.branch-sofa_safi {
+    --accent-primary: 129 140 248;
+    /* indigo-400 */
+    --accent-hover: 165 180 252;
+    /* indigo-300 */
+    --accent-light: 30 58 138;
+    /* indigo-900 */
+  }
+
   body {
     @apply bg-[rgb(var(--bg-primary))] text-[rgb(var(--text-primary))];
     transition: background-color 0.3s ease, color 0.3s ease;

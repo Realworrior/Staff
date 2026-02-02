@@ -6,7 +6,8 @@ const { authMiddleware, requireRole } = require('../middleware/auth');
 // GET all account logs
 router.get('/', authMiddleware, requireRole('admin', 'supervisor'), (req, res) => {
     try {
-        const logs = db.prepare(`
+        const { branch } = req.query;
+        let query = `
             SELECT *,
             CASE 
                 WHEN request_count > 10 THEN 'high'
@@ -14,8 +15,18 @@ router.get('/', authMiddleware, requireRole('admin', 'supervisor'), (req, res) =
                 ELSE 'low'
             END as priority
             FROM account_logs 
-            ORDER BY last_request_at DESC
-        `).all();
+            WHERE 1=1
+        `;
+        const params = [];
+
+        if (branch) {
+            query += ' AND branch = ?';
+            params.push(branch);
+        }
+
+        query += ' ORDER BY last_request_at DESC';
+
+        const logs = db.prepare(query).all(...params);
         res.json({ data: logs });
     } catch (error) {
         console.error(error);

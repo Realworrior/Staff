@@ -49,7 +49,7 @@ router.post('/login', (req, res) => {
 // Get current user
 router.get('/me', authMiddleware, (req, res) => {
     try {
-        const user = db.prepare('SELECT id, username, name, email, role, avatar, created_at FROM users WHERE id = ?').get(req.user.id);
+        const user = db.prepare('SELECT id, username, name, email, role, branch, avatar, created_at FROM users WHERE id = ?').get(req.user.id);
 
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
