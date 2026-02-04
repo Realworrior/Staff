@@ -140,7 +140,7 @@ export const Sidebar = ({ isOpen, toggleSidebar }: SidebarProps) => {
                         <div className="flex flex-col gap-3">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-full bg-[rgb(var(--accent-primary))] flex items-center justify-center text-white font-bold shrink-0">
-                                    {activeRole?.charAt(0).toUpperCase()}
+                                    {activeRole?.charAt(0)?.toUpperCase() || '?'}
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="text-sm font-semibold text-[rgb(var(--text-primary))] truncate">

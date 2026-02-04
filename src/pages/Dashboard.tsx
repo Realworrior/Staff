@@ -71,12 +71,12 @@ export const Dashboard = () => {
                     const allShifts = Array.isArray(response.data) ? response.data : [];
 
                     const myShifts = allShifts
-                        .filter((s: any) => s.user_id.toString() === user.id.toString())
+                        .filter((s: any) => s.user_id?.toString() === user?.id?.toString())
                         .map((shift: any) => {
                             const colleagues = allShifts.filter((s: any) =>
                                 s.date === shift.date &&
                                 s.shift_type === shift.shift_type &&
-                                s.user_id.toString() !== user.id.toString()
+                                s.user_id?.toString() !== user?.id?.toString()
                             );
 
                             return {
@@ -103,7 +103,7 @@ export const Dashboard = () => {
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-2xl md:text-3xl font-bold text-[rgb(var(--text-primary))]">
-                        Welcome back, {user?.name.split(' ')[0]}!
+                        Welcome back, {user?.name?.split(' ')[0] || 'User'}!
                     </h1>
                     <p className="text-[rgb(var(--text-secondary))] mt-1">
                         Here's your overview for <span className="font-medium text-[rgb(var(--accent-primary))]">{format(new Date(), 'EEEE, MMMM do')}</span> at <span className="underline decoration-accent-primary underline-offset-4">{selectedBranch === 'betfalme' ? 'Betfalme' : 'Sofa/Safi'}</span>.

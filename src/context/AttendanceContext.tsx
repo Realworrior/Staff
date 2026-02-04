@@ -76,8 +76,8 @@ export const AttendanceProvider = ({ children }: { children: ReactNode }) => {
     });
 
     const mapRecord = (apiRecord: any): AttendanceRecord => ({
-        id: apiRecord.id.toString(),
-        userId: apiRecord.user_id.toString(),
+        id: (apiRecord.id || '').toString(),
+        userId: (apiRecord.user_id || '').toString(),
         date: apiRecord.date,
         clockIn: apiRecord.clock_in,
         clockOut: apiRecord.clock_out,
