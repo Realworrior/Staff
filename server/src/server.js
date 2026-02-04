@@ -113,7 +113,15 @@ app.use((err, req, res, next) => {
     res.status(500).json({ error: 'Something went wrong!' });
 });
 
-server.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`📊 API available at http://localhost:${PORT}/api`);
-});
+const startServer = () => {
+    server.listen(PORT, () => {
+        console.log(`🚀 Server running on http://localhost:${PORT}`);
+        console.log(`📊 API available at http://localhost:${PORT}/api`);
+    });
+};
+
+if (require.main === module) {
+    startServer();
+}
+
+module.exports = { app, server };

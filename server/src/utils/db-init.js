@@ -23,11 +23,12 @@ async function initDatabase() {
         if (!match) throw new Error('Invalid SUPABASE_URL format');
 
         const projectRef = match[1];
-        const connectionString = `postgresql://postgres:${dbPassword}@db.${projectRef}.supabase.co:5432/postgres`;
+        const connectionString = `postgresql://postgres:${dbPassword}@db.${projectRef}.supabase.co:6543/postgres?pgbouncer=true`;
 
         const client = new Client({
             connectionString,
-            connectionTimeoutMillis: 10000,
+            connectionTimeoutMillis: 30000,
+            ssl: { rejectUnauthorized: false }
         });
 
         await client.connect();
