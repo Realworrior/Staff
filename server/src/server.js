@@ -16,16 +16,27 @@ const chatRoutes = require('./routes/chat');
 
 const app = express();
 const server = require('http').createServer(app);
+
+// Configure CORS origins
+const allowedOrigins = process.env.ALLOWED_ORIGINS
+    ? process.env.ALLOWED_ORIGINS.split(',')
+    : ['http://localhost:5173', 'http://localhost:3000'];
+
 const io = require('socket.io')(server, {
     cors: {
-        origin: "*",
-        methods: ["GET", "POST"]
+        origin: allowedOrigins,
+        methods: ["GET", "POST"],
+        credentials: true
     }
 });
+
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-app.use(cors());
+app.use(cors({
+    origin: allowedOrigins,
+    credentials: true
+}));
 app.use(express.json());
 
 // Request logging middleware
@@ -33,7 +44,6 @@ app.use((req, res, next) => {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.url} - IP: ${req.ip}`);
     next();
 });
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 // Socket.io logic
 const userStatuses = new Map();

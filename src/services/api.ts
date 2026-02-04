@@ -1,9 +1,11 @@
 import axios from 'axios';
 
-// Use relative path in DEV to leverage Vite proxy (fixes firewall issues)
-// In PROD, use the VITE_API_URL environment variable
-const API_URL = import.meta.env.DEV ? '/api' : (import.meta.env.VITE_API_URL || '/api');
+const getApiUrl = () => {
+    if (import.meta.env.DEV) return '/api';
+    return import.meta.env.VITE_API_URL || '/api';
+};
 
+const API_URL = getApiUrl();
 export const API_BASE_URL = API_URL;
 
 const api = axios.create({

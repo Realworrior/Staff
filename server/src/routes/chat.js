@@ -7,20 +7,8 @@ const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Multer setup for file uploads
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadDir = path.join(__dirname, '../../uploads');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
-    }
-});
+// Multer setup for file uploads (memory storage for cloud portability)
+const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // GET /channels
@@ -256,15 +244,37 @@ router.post('/messages', authMiddleware, async (req, res) => {
 });
 
 // POST /upload
-router.post('/upload', authMiddleware, upload.single('file'), (req, res) => {
+router.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
     try {
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-        const fileUrl = `/uploads/${req.file.filename}`;
+        const file = req.file;
+        const fileExt = path.extname(file.originalname);
+        const fileName = `${Date.now()}-${Math.round(Math.random() * 1E9)}${fileExt}`;
+        const filePath = `chat/${fileName}`;
+
+        // Upload to Supabase Storage
+        const { data, error } = await supabase.storage
+            .from('chat-uploads')
+            .upload(filePath, file.buffer, {
+                contentType: file.mimetype,
+                upsert: false
+            });
+
+        if (error) {
+            console.error('Supabase Storage Error:', error);
+            return res.status(500).json({ error: 'Failed to upload to cloud storage' });
+        }
+
+        // Get public URL
+        const { data: { publicUrl } } = supabase.storage
+            .from('chat-uploads')
+            .getPublicUrl(filePath);
+
         res.json({
-            url: fileUrl,
-            name: req.file.originalname,
-            type: req.file.mimetype
+            url: publicUrl,
+            name: file.originalname,
+            type: file.mimetype
         });
     } catch (error) {
         console.error('Upload error:', error);
