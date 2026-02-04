@@ -98,7 +98,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setSelectedBranch(userData.branch || 'betfalme');
             return null; // Success
         } catch (error: any) {
-            console.error('Login failed:', error);
+            console.error('Login error detail:', {
+                status: error.response?.status,
+                data: error.response?.data,
+                message: error.message,
+                config_url: error.config?.url
+            });
             if (error.code === 'ERR_NETWORK') {
                 return 'Network Error. Server unreachable.';
             }
