@@ -1,13 +1,13 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const db = require('../config/database');
+const supabase = require('../config/database');
 const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
 
 // Login
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
 
@@ -15,9 +15,13 @@ router.post('/login', (req, res) => {
             return res.status(400).json({ error: 'Username and password are required' });
         }
 
-        const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username.toLowerCase());
+        const { data: user, error: fetchError } = await supabase
+            .from('users')
+            .select('*')
+            .eq('username', username.toLowerCase())
+            .single();
 
-        if (!user) {
+        if (fetchError || !user) {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
@@ -47,11 +51,15 @@ router.post('/login', (req, res) => {
 });
 
 // Get current user
-router.get('/me', authMiddleware, (req, res) => {
+router.get('/me', authMiddleware, async (req, res) => {
     try {
-        const user = db.prepare('SELECT id, username, name, email, role, branch, avatar, created_at FROM users WHERE id = ?').get(req.user.id);
+        const { data: user, error } = await supabase
+            .from('users')
+            .select('id, username, name, email, role, branch, avatar, created_at')
+            .eq('id', req.user.id)
+            .single();
 
-        if (!user) {
+        if (error || !user) {
             return res.status(404).json({ error: 'User not found' });
         }
 

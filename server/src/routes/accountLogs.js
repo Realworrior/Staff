@@ -1,33 +1,29 @@
 const express = require('express');
 const router = express.Router();
-const db = require('../config/database');
+const supabase = require('../config/database');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 
 // GET all account logs
-router.get('/', authMiddleware, requireRole('admin', 'supervisor'), (req, res) => {
+router.get('/', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     try {
         const { branch } = req.query;
-        let query = `
-            SELECT *,
-            CASE 
-                WHEN request_count > 10 THEN 'high'
-                WHEN request_count > 5 THEN 'medium'
-                ELSE 'low'
-            END as priority
-            FROM account_logs 
-            WHERE 1=1
-        `;
-        const params = [];
+        let query = supabase.from('account_logs').select('*');
 
         if (branch) {
-            query += ' AND branch = ?';
-            params.push(branch);
+            query = query.eq('branch', branch);
         }
 
-        query += ' ORDER BY last_request_at DESC';
+        const { data: logs, error } = await query.order('last_request_at', { ascending: false });
 
-        const logs = db.prepare(query).all(...params);
-        res.json({ data: logs });
+        if (error) throw error;
+
+        // Add priority logic in JS
+        const processedLogs = logs.map(log => ({
+            ...log,
+            priority: log.request_count > 10 ? 'high' : log.request_count > 5 ? 'medium' : 'low'
+        }));
+
+        res.json({ data: processedLogs });
     } catch (error) {
         console.error(error);
         res.status(500).json({ error: 'Failed to fetch account logs' });
@@ -35,7 +31,7 @@ router.get('/', authMiddleware, requireRole('admin', 'supervisor'), (req, res) =
 });
 
 // POST new account log (with 12hr restriction)
-router.post('/', authMiddleware, requireRole('admin', 'supervisor'), (req, res) => {
+router.post('/', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     const { phone_number, branch } = req.body;
 
     if (!phone_number || !branch) {
@@ -44,7 +40,12 @@ router.post('/', authMiddleware, requireRole('admin', 'supervisor'), (req, res) 
 
     try {
         // Check for existing log for this number + branch
-        const existing = db.prepare('SELECT * FROM account_logs WHERE phone_number = ? AND branch = ?').get(phone_number, branch);
+        const { data: existing, error: checkError } = await supabase
+            .from('account_logs')
+            .select('*')
+            .eq('phone_number', phone_number)
+            .eq('branch', branch)
+            .maybeSingle();
 
         if (existing) {
             const lastRequest = new Date(existing.last_request_at);
@@ -58,23 +59,29 @@ router.post('/', authMiddleware, requireRole('admin', 'supervisor'), (req, res) 
             }
 
             // Update existing log
-            db.prepare(`
-                UPDATE account_logs 
-                SET request_count = request_count + 1, 
-                    last_request_at = CURRENT_TIMESTAMP,
-                    updated_at = CURRENT_TIMESTAMP
-                WHERE id = ?
-            `).run(existing.id);
+            const { data: updated, error: updateError } = await supabase
+                .from('account_logs')
+                .update({
+                    request_count: existing.request_count + 1,
+                    last_request_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', existing.id)
+                .select()
+                .single();
 
+            if (updateError) throw updateError;
             return res.json({ message: 'Log updated successfully', id: existing.id });
         } else {
             // Insert new log
-            const result = db.prepare(`
-                INSERT INTO account_logs (phone_number, branch)
-                VALUES (?, ?)
-            `).run(phone_number, branch);
+            const { data: inserted, error: insertError } = await supabase
+                .from('account_logs')
+                .insert([{ phone_number, branch }])
+                .select()
+                .single();
 
-            return res.status(201).json({ message: 'Log created successfully', id: result.lastInsertRowid });
+            if (insertError) throw insertError;
+            return res.status(201).json({ message: 'Log created successfully', id: inserted.id });
         }
     } catch (error) {
         console.error(error);
@@ -83,7 +90,7 @@ router.post('/', authMiddleware, requireRole('admin', 'supervisor'), (req, res) 
 });
 
 // PATCH status
-router.patch('/:id', authMiddleware, requireRole('admin', 'supervisor'), (req, res) => {
+router.patch('/:id', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     const { status } = req.body;
     const { id } = req.params;
 
@@ -92,10 +99,12 @@ router.patch('/:id', authMiddleware, requireRole('admin', 'supervisor'), (req, r
     }
 
     try {
-        const result = db.prepare('UPDATE account_logs SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(status, id);
-        if (result.changes === 0) {
-            return res.status(404).json({ error: 'Log not found' });
-        }
+        const { error } = await supabase
+            .from('account_logs')
+            .update({ status, updated_at: new Date().toISOString() })
+            .eq('id', id);
+
+        if (error) throw error;
         res.json({ message: 'Status updated successfully' });
     } catch (error) {
         console.error(error);

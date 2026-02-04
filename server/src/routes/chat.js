@@ -2,7 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
-const db = require('../config/database');
+const supabase = require('../config/database');
 const { authMiddleware } = require('../middleware/auth');
 
 const router = express.Router();
@@ -25,16 +25,26 @@ const upload = multer({ storage });
 
 // GET /channels
 // List all public channels and private channels I am a member of
-router.get('/channels', authMiddleware, (req, res) => {
+router.get('/channels', authMiddleware, async (req, res) => {
     try {
-        const channels = db.prepare(`
-            SELECT DISTINCT c.* 
-            FROM chat_channels c
-            LEFT JOIN channel_members cm ON c.id = cm.channel_id
-            WHERE c.type IN ('public', 'private') OR cm.user_id = ?
-            ORDER BY c.type DESC, c.name ASC
-        `).all(req.user.id);
-        res.json(channels);
+        // In Supabase, we can use a complex query or just fetch what the user has access to.
+        // For simplicity and matching old logic:
+        const { data: channels, error } = await supabase
+            .from('chat_channels')
+            .select('*, channel_members!left(user_id)')
+            .or(`type.eq.public,type.eq.private,channel_members.user_id.eq.${req.user.id}`)
+            .order('type', { ascending: false })
+            .order('name', { ascending: true });
+
+        if (error) throw error;
+
+        // Remove the join data from the final response to keep it clean
+        const cleanedChannels = channels.map(({ channel_members, ...c }) => c);
+
+        // Filter unique by ID (since the join might create duplicates)
+        const uniqueChannels = Array.from(new Map(cleanedChannels.map(c => [c.id, c])).values());
+
+        res.json(uniqueChannels);
     } catch (error) {
         console.error('Fetch channels error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -42,44 +52,82 @@ router.get('/channels', authMiddleware, (req, res) => {
 });
 
 // POST /channels
-router.post('/channels', authMiddleware, (req, res) => {
+router.post('/channels', authMiddleware, async (req, res) => {
     try {
         const { name, description, type } = req.body;
         if (!name) return res.status(400).json({ error: 'Channel name is required' });
 
-        const result = db.prepare(`
-            INSERT INTO chat_channels (name, description, type, created_by)
-            VALUES (?, ?, ?, ?)
-        `).run(name.toLowerCase().replace(/\s+/g, '-'), description || null, type || 'public', req.user.id);
+        const channelName = name.toLowerCase().replace(/\s+/g, '-');
 
-        const newChannel = db.prepare('SELECT * FROM chat_channels WHERE id = ?').get(result.lastInsertRowid);
+        const { data: newChannel, error } = await supabase
+            .from('chat_channels')
+            .insert([{
+                name: channelName,
+                description: description || null,
+                type: type || 'public',
+                created_by: req.user.id
+            }])
+            .select()
+            .single();
+
+        if (error) {
+            if (error.code === '23505') {
+                return res.status(409).json({ error: 'Channel name already exists' });
+            }
+            throw error;
+        }
 
         // Auto-join creator
-        db.prepare('INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)').run(newChannel.id, req.user.id);
+        await supabase.from('channel_members').insert([{
+            channel_id: newChannel.id,
+            user_id: req.user.id
+        }]);
 
         res.status(201).json(newChannel);
     } catch (error) {
-        if (error.message.includes('UNIQUE constraint failed')) {
-            return res.status(409).json({ error: 'Channel name already exists' });
-        }
         console.error('Create channel error:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
 });
 
 // GET /direct-messages
-// Special endpoint to get all users I have a DM with
-router.get('/direct-messages', authMiddleware, (req, res) => {
+router.get('/direct-messages', authMiddleware, async (req, res) => {
     try {
-        const dmChannels = db.prepare(`
-            SELECT c.*, u.name as target_user_name, u.avatar as target_user_avatar, u.id as target_user_id
-            FROM chat_channels c
-            JOIN channel_members cm_self ON c.id = cm_self.channel_id AND cm_self.user_id = ?
-            JOIN channel_members cm_target ON c.id = cm_target.channel_id AND cm_target.user_id != ?
-            JOIN users u ON cm_target.user_id = u.id
-            WHERE c.type = 'dm'
-        `).all(req.user.id, req.user.id);
-        res.json(dmChannels);
+        // This is a bit complex for a single Supabase query without a view.
+        // We'll perform it in a few steps or use raw SQL if needed.
+        // Step 1: Find all 'dm' channels I'm in
+        const { data: myDms, error } = await supabase
+            .from('channel_members')
+            .select('channel_id, chat_channels!inner(*)')
+            .eq('user_id', req.user.id)
+            .eq('chat_channels.type', 'dm');
+
+        if (error) throw error;
+        if (!myDms.length) return res.json([]);
+
+        const channelIds = myDms.map(d => d.channel_id);
+
+        // Step 2: Get the other member and their user info for each channel
+        const { data: others, error: othersError } = await supabase
+            .from('channel_members')
+            .select('channel_id, users!inner(id, name, avatar)')
+            .in('channel_id', channelIds)
+            .neq('user_id', req.user.id);
+
+        if (othersError) throw othersError;
+
+        const results = myDms.map(dm => {
+            const other = others.find(o => o.channel_id === dm.channel_id);
+            if (!other) return null;
+            return {
+                ...dm.chat_channels,
+                target_user_name: other.users.name,
+                target_user_avatar: other.users.avatar,
+                target_user_id: other.users.id
+            };
+        }).filter(Boolean);
+
+        res.json(results);
     } catch (error) {
         console.error('Fetch DMs error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -87,8 +135,7 @@ router.get('/direct-messages', authMiddleware, (req, res) => {
 });
 
 // POST /dm
-// Find or create a DM channel between current user and target user
-router.post('/dm', authMiddleware, (req, res) => {
+router.post('/dm', authMiddleware, async (req, res) => {
     try {
         const { targetUserId } = req.body;
         if (!targetUserId) return res.status(400).json({ error: 'Target user ID is required' });
@@ -96,19 +143,29 @@ router.post('/dm', authMiddleware, (req, res) => {
         const ids = [req.user.id, parseInt(targetUserId)].sort((a, b) => a - b);
         const dmName = `dm_${ids[0]}_${ids[1]}`;
 
-        let channel = db.prepare('SELECT * FROM chat_channels WHERE name = ? AND type = ?').get(dmName, 'dm');
+        let { data: channel, error: fetchError } = await supabase
+            .from('chat_channels')
+            .select('*')
+            .eq('name', dmName)
+            .eq('type', 'dm')
+            .maybeSingle();
 
         if (!channel) {
-            const result = db.prepare(`
-                INSERT INTO chat_channels (name, type, created_by)
-                VALUES (?, ?, ?)
-            `).run(dmName, 'dm', req.user.id);
+            const { data: newChannel, error: createError } = await supabase
+                .from('chat_channels')
+                .insert([{ name: dmName, type: 'dm', created_by: req.user.id }])
+                .select()
+                .single();
 
-            channel = db.prepare('SELECT * FROM chat_channels WHERE id = ?').get(result.lastInsertRowid);
+            if (createError) throw createError;
+            channel = newChannel;
 
-            const insertMember = db.prepare('INSERT INTO channel_members (channel_id, user_id) VALUES (?, ?)');
-            insertMember.run(channel.id, ids[0]);
-            if (ids[0] !== ids[1]) insertMember.run(channel.id, ids[1]);
+            const members = [{ channel_id: channel.id, user_id: ids[0] }];
+            if (ids[0] !== ids[1]) {
+                members.push({ channel_id: channel.id, user_id: ids[1] });
+            }
+
+            await supabase.from('channel_members').insert(members);
         }
 
         res.json(channel);
@@ -119,36 +176,43 @@ router.post('/dm', authMiddleware, (req, res) => {
 });
 
 // GET /channels/:id/messages
-router.get('/channels/:id/messages', authMiddleware, (req, res) => {
+router.get('/channels/:id/messages', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
 
-        const channel = db.prepare(`
-            SELECT c.* FROM chat_channels c
-            LEFT JOIN channel_members cm ON c.id = cm.channel_id
-            WHERE c.id = ? AND (c.type = 'public' OR cm.user_id = ?)
-        `).get(id, req.user.id);
+        // Verify access
+        const { data: channel, error: accessError } = await supabase
+            .from('chat_channels')
+            .select('*, channel_members(user_id)')
+            .eq('id', id)
+            .or(`type.eq.public,channel_members.user_id.eq.${req.user.id}`)
+            .maybeSingle();
 
-        if (!channel) {
+        if (accessError || !channel) {
             return res.status(403).json({ error: 'Access denied' });
         }
 
-        const messages = db.prepare(`
-            SELECT m.*, u.name as user_name, u.avatar as user_avatar,
-                   (SELECT json_group_array(json_object('emoji', emoji, 'user_id', user_id)) FROM message_reactions WHERE message_id = m.id) as reactions
-            FROM chat_messages m
-            JOIN users u ON m.user_id = u.id
-            WHERE m.channel_id = ?
-            ORDER BY m.created_at ASC
-            LIMIT 100
-        `).all(id);
+        const { data: messages, error } = await supabase
+            .from('chat_messages')
+            .select(`
+                *,
+                users(name, avatar),
+                message_reactions(emoji, user_id)
+            `)
+            .eq('channel_id', id)
+            .order('created_at', { ascending: true })
+            .limit(100);
 
-        const parsedMessages = messages.map(msg => ({
-            ...msg,
-            reactions: JSON.parse(msg.reactions || '[]')
+        if (error) throw error;
+
+        const processedMessages = messages.map(m => ({
+            ...m,
+            user_name: m.users.name,
+            user_avatar: m.users.avatar,
+            reactions: m.message_reactions || []
         }));
 
-        res.json(parsedMessages);
+        res.json(processedMessages);
     } catch (error) {
         console.error('Fetch messages error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -156,7 +220,7 @@ router.get('/channels/:id/messages', authMiddleware, (req, res) => {
 });
 
 // POST /messages
-router.post('/messages', authMiddleware, (req, res) => {
+router.post('/messages', authMiddleware, async (req, res) => {
     try {
         const { channelId, content, file_url, file_name, file_type } = req.body;
 
@@ -164,19 +228,27 @@ router.post('/messages', authMiddleware, (req, res) => {
             return res.status(400).json({ error: 'Channel ID and content/file are required' });
         }
 
-        const result = db.prepare(`
-            INSERT INTO chat_messages (channel_id, user_id, content, file_url, file_name, file_type)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `).run(channelId, req.user.id, content || '', file_url || null, file_name || null, file_type || null);
+        const { data: message, error } = await supabase
+            .from('chat_messages')
+            .insert([{
+                channel_id: channelId,
+                user_id: req.user.id,
+                content: content || '',
+                file_url: file_url || null,
+                file_name: file_name || null,
+                file_type: file_type || null
+            }])
+            .select('*, users(name, avatar)')
+            .single();
 
-        const newMessage = db.prepare(`
-            SELECT m.*, u.name as user_name, u.avatar as user_avatar
-            FROM chat_messages m
-            JOIN users u ON m.user_id = u.id
-            WHERE m.id = ?
-        `).get(result.lastInsertRowid);
+        if (error) throw error;
 
-        res.status(201).json({ ...newMessage, reactions: [] });
+        res.status(201).json({
+            ...message,
+            user_name: message.users.name,
+            user_avatar: message.users.avatar,
+            reactions: []
+        });
     } catch (error) {
         console.error('Create message error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -201,19 +273,27 @@ router.post('/upload', authMiddleware, upload.single('file'), (req, res) => {
 });
 
 // POST /reactions
-router.post('/reactions', authMiddleware, (req, res) => {
+router.post('/reactions', authMiddleware, async (req, res) => {
     try {
         const { messageId, emoji } = req.body;
 
-        const existing = db.prepare('SELECT id FROM message_reactions WHERE message_id = ? AND user_id = ? AND emoji = ?')
-            .get(messageId, req.user.id, emoji);
+        const { data: existing, error: checkError } = await supabase
+            .from('message_reactions')
+            .select('id')
+            .eq('message_id', messageId)
+            .eq('user_id', req.user.id)
+            .eq('emoji', emoji)
+            .maybeSingle();
 
         if (existing) {
-            db.prepare('DELETE FROM message_reactions WHERE id = ?').run(existing.id);
+            await supabase.from('message_reactions').delete().eq('id', existing.id);
             res.json({ action: 'removed', emoji, messageId, userId: req.user.id });
         } else {
-            db.prepare('INSERT INTO message_reactions (message_id, user_id, emoji) VALUES (?, ?, ?)')
-                .run(messageId, req.user.id, emoji);
+            await supabase.from('message_reactions').insert([{
+                message_id: messageId,
+                user_id: req.user.id,
+                emoji
+            }]);
             res.json({ action: 'added', emoji, messageId, userId: req.user.id });
         }
     } catch (error) {

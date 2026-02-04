@@ -1,12 +1,12 @@
 const express = require('express');
-const db = require('../config/database');
+const supabase = require('../config/database');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
 // GET /calculate?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
 // Calculates transport allowance for all staff in a range
-router.get('/calculate', authMiddleware, requireRole('admin', 'supervisor'), (req, res) => {
+router.get('/calculate', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     try {
         const { startDate, endDate, branch } = req.query;
 
@@ -14,36 +14,37 @@ router.get('/calculate', authMiddleware, requireRole('admin', 'supervisor'), (re
             return res.status(400).json({ error: 'startDate and endDate are required' });
         }
 
-        let staffQuery = "SELECT id, name, role, transport_allowance FROM users WHERE role = 'staff'";
-        const staffParams = [];
+        let staffQuery = supabase.from('users').select('id, name, role, transport_allowance').eq('role', 'staff');
 
         if (branch) {
-            staffQuery += " AND branch = ?";
-            staffParams.push(branch);
+            staffQuery = staffQuery.eq('branch', branch);
         }
 
-        const staff = db.prepare(staffQuery).all(...staffParams);
+        const { data: staff, error: staffError } = await staffQuery;
+        if (staffError) throw staffError;
 
-        const results = staff.map(user => {
+        const results = await Promise.all(staff.map(async (user) => {
             // Count total shifts (PM and NT only) in the range for this user
-            const shiftCount = db.prepare(`
-                SELECT COUNT(*) as count 
-                FROM schedules 
-                WHERE user_id = ? 
-                AND date BETWEEN ? AND ? 
-                AND shift_type IN ('PM', 'NT')
-            `).get(user.id, startDate, endDate).count;
+            const { count, error } = await supabase
+                .from('schedules')
+                .select('*', { count: 'exact', head: true })
+                .eq('user_id', user.id)
+                .gte('date', startDate)
+                .lte('date', endDate)
+                .in('shift_type', ['PM', 'NT']);
+
+            if (error) throw error;
 
             return {
                 userId: user.id,
                 name: user.name,
                 role: user.role,
                 transportAllowance: user.transport_allowance,
-                shiftCount,
-                totalTransport: shiftCount * user.transport_allowance,
+                shiftCount: count || 0,
+                totalTransport: (count || 0) * user.transport_allowance,
                 status: 'pending' // Default for calculation view
             };
-        });
+        }));
 
         res.json(results);
     } catch (error) {
@@ -53,15 +54,22 @@ router.get('/calculate', authMiddleware, requireRole('admin', 'supervisor'), (re
 });
 
 // GET /history
-router.get('/history', authMiddleware, requireRole('admin', 'supervisor'), (req, res) => {
+router.get('/history', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     try {
-        const records = db.prepare(`
-            SELECT p.*, u.name as user_name 
-            FROM payroll_records p
-            JOIN users u ON p.user_id = u.id
-            ORDER BY p.paid_at DESC, p.created_at DESC
-        `).all();
-        res.json(records);
+        const { data: records, error } = await supabase
+            .from('payroll_records')
+            .select('*, users!inner(name)')
+            .order('paid_at', { ascending: false, nullsFirst: false })
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+
+        const flattened = records.map(r => ({
+            ...r,
+            user_name: r.users.name
+        }));
+
+        res.json(flattened);
     } catch (error) {
         console.error('Fetch payroll history error:', error);
         res.status(500).json({ error: 'Internal server error' });
@@ -69,16 +77,23 @@ router.get('/history', authMiddleware, requireRole('admin', 'supervisor'), (req,
 });
 
 // POST /record
-router.post('/record', authMiddleware, requireRole('admin', 'supervisor'), (req, res) => {
+router.post('/record', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     try {
         const { userId, startDate, endDate, totalTransport } = req.body;
 
-        const result = db.prepare(`
-            INSERT INTO payroll_records (user_id, start_date, end_date, total_transport, status)
-            VALUES (?, ?, ?, ?, 'pending')
-        `).run(userId, startDate, endDate, totalTransport);
+        const { data: newRecord, error } = await supabase
+            .from('payroll_records')
+            .insert([{
+                user_id: userId,
+                start_date: startDate,
+                end_date: endDate,
+                total_transport: totalTransport,
+                status: 'pending'
+            }])
+            .select()
+            .single();
 
-        const newRecord = db.prepare('SELECT * FROM payroll_records WHERE id = ?').get(result.lastInsertRowid);
+        if (error) throw error;
         res.status(201).json(newRecord);
     } catch (error) {
         console.error('Create payroll record error:', error);
@@ -87,7 +102,7 @@ router.post('/record', authMiddleware, requireRole('admin', 'supervisor'), (req,
 });
 
 // PATCH /:id/status
-router.patch('/:id/status', authMiddleware, requireRole('admin', 'supervisor'), (req, res) => {
+router.patch('/:id/status', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     try {
         const { id } = req.params;
         const { status } = req.body;
@@ -98,9 +113,14 @@ router.patch('/:id/status', authMiddleware, requireRole('admin', 'supervisor'), 
 
         const paidAt = status === 'paid' ? new Date().toISOString() : null;
 
-        db.prepare('UPDATE payroll_records SET status = ?, paid_at = ? WHERE id = ?').run(status, paidAt, id);
+        const { data: updated, error } = await supabase
+            .from('payroll_records')
+            .update({ status, paid_at: paidAt })
+            .eq('id', id)
+            .select()
+            .single();
 
-        const updated = db.prepare('SELECT * FROM payroll_records WHERE id = ?').get(id);
+        if (error) throw error;
         res.json(updated);
     } catch (error) {
         console.error('Update payroll status error:', error);
