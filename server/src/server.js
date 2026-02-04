@@ -4,7 +4,11 @@ const cors = require('cors');
 const path = require('path');
 
 // Initialize database
-require('./config/database');
+const supabase = require('./config/database');
+const { initDatabase } = require('./utils/db-init');
+
+// Run automated initialization
+initDatabase();
 
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
