@@ -36,7 +36,7 @@ export const UserManagement = () => {
                     refreshUsers();
                 }
             } else {
-                const success = await addUser({
+                const errorMsg = await addUser({
                     username,
                     password,
                     name,
@@ -45,11 +45,11 @@ export const UserManagement = () => {
                     branch: selectedBranch,
                 });
 
-                if (success) {
+                if (!errorMsg) {
                     setIsAdding(false);
                     resetForm();
                 } else {
-                    setError('Failed to create user. Username might already exist.');
+                    setError(errorMsg);
                 }
             }
         } catch (err) {
@@ -79,9 +79,9 @@ export const UserManagement = () => {
     const handleDelete = async (id: string, name: string) => {
         if (!confirm(`Are you sure you want to delete ${name}? This action cannot be undone.`)) return;
 
-        const success = await deleteUser(id);
-        if (!success) {
-            alert('Failed to delete user.');
+        const errorMsg = await deleteUser(id);
+        if (errorMsg) {
+            alert(errorMsg);
         }
     };
 

@@ -23,8 +23,8 @@ interface AuthContextType {
     // User Management (Admin only)
     users: User[];
     refreshUsers: () => Promise<void>;
-    addUser: (user: any) => Promise<boolean>;
-    deleteUser: (id: string) => Promise<boolean>;
+    addUser: (user: any) => Promise<string | null>;
+    deleteUser: (id: string) => Promise<string | null>;
 
     // Branch Management
     selectedBranch: string;
@@ -120,25 +120,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         setUser(null);
     };
 
-    const addUser = async (userData: any): Promise<boolean> => {
+    const addUser = async (userData: any): Promise<string | null> => {
         try {
             await usersAPI.create(userData);
             await refreshUsers();
-            return true;
-        } catch (error) {
+            return null; // Success
+        } catch (error: any) {
             console.error('Failed to add user:', error);
-            return false;
+            return error.response?.data?.error || 'Failed to create user. Please try again.';
         }
     };
 
-    const deleteUser = async (id: string): Promise<boolean> => {
+    const deleteUser = async (id: string): Promise<string | null> => {
         try {
             await usersAPI.delete(Number(id));
             await refreshUsers();
-            return true;
-        } catch (error) {
+            return null; // Success
+        } catch (error: any) {
             console.error('Failed to delete user:', error);
-            return false;
+            return error.response?.data?.error || 'Failed to delete user.';
         }
     };
 

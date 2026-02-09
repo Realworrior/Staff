@@ -1,6 +1,8 @@
 const express = require('express');
-const supabase = require('../config/database');
+const Attendance = require('../models/Attendance');
+const User = require('../models/User');
 const { authMiddleware, requireRole } = require('../middleware/auth');
+const { handleError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -8,92 +10,71 @@ const router = express.Router();
 router.post('/clock-in', authMiddleware, requireRole('staff', 'supervisor'), async (req, res) => {
     try {
         const { location, latitude, longitude } = req.body;
-        const today = new Date().toISOString().split('T')[0];
-        const currentTime = new Date().toLocaleTimeString('en-GB', { hour12: false });
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-        // Check if already clocked in today
-        const { data: existing, error: checkError } = await supabase
-            .from('attendance')
-            .select('id')
-            .eq('user_id', req.user.id)
-            .eq('date', today)
-            .is('clock_out', null)
-            .maybeSingle();
+        // Check if already clocked in today (where clock_out is null)
+        const existing = await Attendance.findOne({
+            user_id: req.user.id,
+            date: { $gte: today },
+            clock_out: { $exists: false }
+        });
 
         if (existing) {
             return res.status(400).json({ error: 'Already clocked in' });
         }
 
-        const { data, error } = await supabase
-            .from('attendance')
-            .insert([{
-                user_id: req.user.id,
-                date: today,
-                clock_in: currentTime,
-                location,
-                latitude,
-                longitude
-            }])
-            .select()
-            .single();
+        const attendance = await Attendance.create({
+            user_id: req.user.id,
+            date: today,
+            clock_in: now,
+            location,
+            latitude,
+            longitude
+        });
 
-        if (error) throw error;
-        res.status(201).json(data);
+        res.status(201).json({ ...attendance.toObject(), id: attendance._id });
     } catch (error) {
-        console.error('Clock in error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Clock in');
     }
 });
 
 // Clock out (Staff/Supervisor only)
 router.post('/clock-out', authMiddleware, requireRole('staff', 'supervisor'), async (req, res) => {
     try {
-        const today = new Date().toISOString().split('T')[0];
-        const currentTime = new Date().toLocaleTimeString('en-GB', { hour12: false });
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-        const { data: attendance, error: fetchError } = await supabase
-            .from('attendance')
-            .select('*')
-            .eq('user_id', req.user.id)
-            .eq('date', today)
-            .is('clock_out', null)
-            .maybeSingle();
+        const attendance = await Attendance.findOne({
+            user_id: req.user.id,
+            date: { $gte: today },
+            clock_out: { $exists: false }
+        });
 
-        if (fetchError || !attendance) {
+        if (!attendance) {
             return res.status(400).json({ error: 'Not clocked in' });
         }
 
-        const { data: updated, error: updateError } = await supabase
-            .from('attendance')
-            .update({ clock_out: currentTime })
-            .eq('id', attendance.id)
-            .select()
-            .single();
+        attendance.clock_out = now;
+        await attendance.save();
 
-        if (updateError) throw updateError;
-        res.json(updated);
+        res.json({ ...attendance.toObject(), id: attendance._id });
     } catch (error) {
-        console.error('Clock out error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Clock out');
     }
 });
 
 // Get my attendance records
 router.get('/my-records', authMiddleware, async (req, res) => {
     try {
-        const { data: records, error } = await supabase
-            .from('attendance')
-            .select('*')
-            .eq('user_id', req.user.id)
-            .order('date', { ascending: false })
-            .order('clock_in', { ascending: false })
+        const records = await Attendance.find({ user_id: req.user.id })
+            .sort({ date: -1, clock_in: -1 })
             .limit(50);
 
-        if (error) throw error;
-        res.json(records);
+        const mappedRecords = records.map(r => ({ ...r.toObject(), id: r._id }));
+        res.json(mappedRecords);
     } catch (error) {
-        console.error('Get records error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Get my records');
     }
 });
 
@@ -101,41 +82,33 @@ router.get('/my-records', authMiddleware, async (req, res) => {
 router.get('/all', authMiddleware, requireRole('admin'), async (req, res) => {
     try {
         const { startDate, endDate, userId, branch } = req.query;
+        let query = {};
 
-        let query = supabase
-            .from('attendance')
-            .select('*, users!inner(name, role, branch)');
+        if (userId) query.user_id = userId;
+        if (startDate || endDate) {
+            query.date = {};
+            if (startDate) query.date.$gte = new Date(startDate);
+            if (endDate) query.date.$lte = new Date(endDate);
+        }
+
+        let history = await Attendance.find(query)
+            .populate('user_id', 'name role branch')
+            .sort({ date: -1, clock_in: -1 });
 
         if (branch) {
-            query = query.eq('users.branch', branch);
-        }
-        if (startDate) {
-            query = query.gte('date', startDate);
-        }
-        if (endDate) {
-            query = query.lte('date', endDate);
-        }
-        if (userId) {
-            query = query.eq('user_id', userId);
+            history = history.filter(h => h.user_id && h.user_id.branch === branch);
         }
 
-        const { data: records, error } = await query
-            .order('date', { ascending: false })
-            .order('clock_in', { ascending: false });
-
-        if (error) throw error;
-
-        // Flatten user info to match old schema
-        const flattened = records.map(r => ({
-            ...r,
-            user_name: r.users.name,
-            user_role: r.users.role
+        const mappedHistory = history.map(h => ({
+            ...h.toObject(),
+            id: h._id,
+            user_name: h.user_id ? h.user_id.name : 'Unknown',
+            user_role: h.user_id ? h.user_id.role : 'Unknown'
         }));
 
-        res.json(flattened);
+        res.json(mappedHistory);
     } catch (error) {
-        console.error('Get all attendance error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Get all attendance');
     }
 });
 
@@ -143,41 +116,49 @@ router.get('/all', authMiddleware, requireRole('admin'), async (req, res) => {
 router.get('/summary', authMiddleware, requireRole('admin'), async (req, res) => {
     try {
         const { branch } = req.query;
-        const today = new Date().toISOString().split('T')[0];
-        const thirtyDaysAgo = new Date();
+        const now = new Date();
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const thirtyDaysAgo = new Date(today);
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-        const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
 
         // 1. Total staff
-        let staffQuery = supabase.from('users').select('*', { count: 'exact', head: true }).in('role', ['staff', 'supervisor']);
-        if (branch) staffQuery = staffQuery.eq('branch', branch);
-        const { count: totalStaffCount } = await staffQuery;
+        const staffFilter = { role: { $in: ['staff', 'supervisor'] } };
+        if (branch) staffFilter.branch = branch;
+        const totalStaffCount = await User.countDocuments(staffFilter);
 
         // 2. Present today
-        let presentQuery = supabase.from('attendance').select('user_id, users!inner(branch)', { count: 'exact', head: true }).eq('date', today);
-        if (branch) presentQuery = presentQuery.eq('users.branch', branch);
-        const { count: presentTodayCount } = await presentQuery;
+        let presentQuery = Attendance.find({ date: { $gte: today } }).populate('user_id');
+        let presentRecords = await presentQuery;
+        if (branch) {
+            presentRecords = presentRecords.filter(r => r.user_id && r.user_id.branch === branch);
+        }
+        const presentTodayCount = presentRecords.length;
 
-        // 3. Last 30 days data for Avg Hours and Late Arrival (doing calculation in JS)
-        let thirtyDaysQuery = supabase.from('attendance').select('clock_in, clock_out, users!inner(branch)').gte('date', thirtyDaysAgoStr);
-        if (branch) thirtyDaysQuery = thirtyDaysQuery.eq('users.branch', branch);
-        const { data: recentRecords, error } = await thirtyDaysQuery;
-
-        if (error) throw error;
+        // 3. Last 30 days data
+        let thirtyDaysRecords = await Attendance.find({ date: { $gte: thirtyDaysAgo } }).populate('user_id');
+        if (branch) {
+            thirtyDaysRecords = thirtyDaysRecords.filter(r => r.user_id && r.user_id.branch === branch);
+        }
 
         let totalHours = 0;
         let recordsWithHours = 0;
         let lateCount = 0;
 
-        recentRecords.forEach(r => {
-            // Late check
-            if (r.clock_in > '09:05:00') lateCount++;
+        thirtyDaysRecords.forEach(r => {
+            // Late check (assumed 9:05 AM)
+            if (r.clock_in) {
+                const clockInDate = new Date(r.clock_in);
+                const hour = clockInDate.getHours();
+                const minute = clockInDate.getMinutes();
+                if (hour > 9 || (hour === 9 && minute > 5)) {
+                    lateCount++;
+                }
+            }
 
             // Hours check
             if (r.clock_in && r.clock_out) {
-                const [h1, m1, s1] = r.clock_in.split(':').map(Number);
-                const [h2, m2, s2] = r.clock_out.split(':').map(Number);
-                const hrs = (h2 + m2 / 60 + (s2 || 0) / 3600) - (h1 + m1 / 60 + (s1 || 0) / 3600);
+                const diffMs = new Date(r.clock_out) - new Date(r.clock_in);
+                const hrs = diffMs / (1000 * 60 * 60);
                 if (hrs > 0) {
                     totalHours += hrs;
                     recordsWithHours++;
@@ -186,14 +167,13 @@ router.get('/summary', authMiddleware, requireRole('admin'), async (req, res) =>
         });
 
         res.json({
-            totalStaff: totalStaffCount || 0,
-            presentToday: presentTodayCount || 0,
+            totalStaff: totalStaffCount,
+            presentToday: presentTodayCount,
             avgHoursWorked: recordsWithHours > 0 ? (totalHours / recordsWithHours).toFixed(2) : 0,
             lateArrivals: lateCount
         });
     } catch (error) {
-        console.error('Get summary error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Get attendance summary');
     }
 });
 

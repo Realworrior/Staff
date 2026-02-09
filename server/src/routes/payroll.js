@@ -1,11 +1,13 @@
 const express = require('express');
-const supabase = require('../config/database');
+const Payroll = require('../models/Payroll');
+const User = require('../models/User');
+const Schedule = require('../models/Schedule');
 const { authMiddleware, requireRole } = require('../middleware/auth');
+const { handleError } = require('../utils/errors');
 
 const router = express.Router();
 
 // GET /calculate?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD
-// Calculates transport allowance for all staff in a range
 router.get('/calculate', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     try {
         const { startDate, endDate, branch } = req.query;
@@ -14,65 +16,52 @@ router.get('/calculate', authMiddleware, requireRole('admin', 'supervisor'), asy
             return res.status(400).json({ error: 'startDate and endDate are required' });
         }
 
-        let staffQuery = supabase.from('users').select('id, name, role, transport_allowance').eq('role', 'staff');
+        const staffFilter = { role: 'staff' };
+        if (branch) staffFilter.branch = branch;
 
-        if (branch) {
-            staffQuery = staffQuery.eq('branch', branch);
-        }
-
-        const { data: staff, error: staffError } = await staffQuery;
-        if (staffError) throw staffError;
+        const staff = await User.find(staffFilter).select('id name role transport_allowance');
 
         const results = await Promise.all(staff.map(async (user) => {
             // Count total shifts (PM and NT only) in the range for this user
-            const { count, error } = await supabase
-                .from('schedules')
-                .select('*', { count: 'exact', head: true })
-                .eq('user_id', user.id)
-                .gte('date', startDate)
-                .lte('date', endDate)
-                .in('shift_type', ['PM', 'NT']);
-
-            if (error) throw error;
+            const count = await Schedule.countDocuments({
+                user_id: user._id,
+                date: { $gte: new Date(startDate), $lte: new Date(endDate) },
+                shift_type: { $in: ['PM', 'NT'] }
+            });
 
             return {
-                userId: user.id,
+                userId: user._id,
                 name: user.name,
                 role: user.role,
                 transportAllowance: user.transport_allowance,
-                shiftCount: count || 0,
-                totalTransport: (count || 0) * user.transport_allowance,
-                status: 'pending' // Default for calculation view
+                shiftCount: count,
+                totalTransport: count * user.transport_allowance,
+                status: 'pending'
             };
         }));
 
         res.json(results);
     } catch (error) {
-        console.error('Payroll calculation error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Calculate payroll');
     }
 });
 
 // GET /history
 router.get('/history', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     try {
-        const { data: records, error } = await supabase
-            .from('payroll_records')
-            .select('*, users!inner(name)')
-            .order('paid_at', { ascending: false, nullsFirst: false })
-            .order('created_at', { ascending: false });
+        const records = await Payroll.find({})
+            .populate('user_id', 'name')
+            .sort({ paid_at: -1, created_at: -1 });
 
-        if (error) throw error;
-
-        const flattened = records.map(r => ({
-            ...r,
-            user_name: r.users.name
+        const mappedRecords = records.map(r => ({
+            ...r.toObject(),
+            id: r._id,
+            user_name: r.user_id ? r.user_id.name : 'Unknown'
         }));
 
-        res.json(flattened);
+        res.json(mappedRecords);
     } catch (error) {
-        console.error('Fetch payroll history error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Fetch payroll history');
     }
 });
 
@@ -81,23 +70,17 @@ router.post('/record', authMiddleware, requireRole('admin', 'supervisor'), async
     try {
         const { userId, startDate, endDate, totalTransport } = req.body;
 
-        const { data: newRecord, error } = await supabase
-            .from('payroll_records')
-            .insert([{
-                user_id: userId,
-                start_date: startDate,
-                end_date: endDate,
-                total_transport: totalTransport,
-                status: 'pending'
-            }])
-            .select()
-            .single();
+        const record = await Payroll.create({
+            user_id: userId,
+            start_date: new Date(startDate),
+            end_date: new Date(endDate),
+            total_transport: totalTransport,
+            status: 'pending'
+        });
 
-        if (error) throw error;
-        res.status(201).json(newRecord);
+        res.status(201).json({ ...record.toObject(), id: record._id });
     } catch (error) {
-        console.error('Create payroll record error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Create payroll record');
     }
 });
 
@@ -111,20 +94,19 @@ router.patch('/:id/status', authMiddleware, requireRole('admin', 'supervisor'), 
             return res.status(400).json({ error: 'Invalid status' });
         }
 
-        const paidAt = status === 'paid' ? new Date().toISOString() : null;
+        const updateData = { status };
+        if (status === 'paid') updateData.paid_at = new Date();
+        else updateData.paid_at = null;
 
-        const { data: updated, error } = await supabase
-            .from('payroll_records')
-            .update({ status, paid_at: paidAt })
-            .eq('id', id)
-            .select()
-            .single();
+        const updated = await Payroll.findByIdAndUpdate(id, updateData, { new: true });
 
-        if (error) throw error;
-        res.json(updated);
+        if (!updated) {
+            return res.status(404).json({ error: 'Payroll record not found' });
+        }
+
+        res.json({ ...updated.toObject(), id: updated._id });
     } catch (error) {
-        console.error('Update payroll status error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Update payroll status');
     }
 });
 

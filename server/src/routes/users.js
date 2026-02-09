@@ -1,29 +1,32 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
-const supabase = require('../config/database');
+const User = require('../models/User');
 const { authMiddleware, requireRole } = require('../middleware/auth');
+const { handleError } = require('../utils/errors');
 
 const router = express.Router();
 
 // Get all users (Admin and Supervisor see all, Staff see limited)
 router.get('/', authMiddleware, async (req, res) => {
     try {
-        let query = supabase.from('users');
-
+        let projection = '';
         if (req.user.role === 'admin' || req.user.role === 'supervisor') {
-            query = query.select('id, username, name, email, role, branch, avatar, transport_allowance, created_at');
+            projection = 'username name email role branch avatar transport_allowance created_at';
         } else {
             // Staff only see basic info for contact/chat
-            query = query.select('id, username, name, role, branch, avatar');
+            projection = 'username name role branch avatar';
         }
 
-        const { data: users, error } = await query;
+        const users = await User.find({}).select(projection);
 
-        if (error) throw error;
-        res.json(users);
+        const mappedUsers = users.map(u => ({
+            ...u.toObject(),
+            id: u._id
+        }));
+
+        res.json(mappedUsers);
     } catch (error) {
-        console.error('Get users error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Get users');
     }
 });
 
@@ -43,54 +46,42 @@ router.post('/', authMiddleware, requireRole('admin'), async (req, res) => {
         const passwordHash = bcrypt.hashSync(password, 10);
         const avatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=10B981&color=fff`;
 
-        const { data, error } = await supabase
-            .from('users')
-            .insert([{
-                username: username.toLowerCase(),
-                password_hash: passwordHash,
-                name,
-                email: email || null,
-                role,
-                avatar,
-                transport_allowance: transport_allowance || 0,
-                branch: branch || 'betfalme'
-            }])
-            .select('id, username, name, email, role, branch, avatar, transport_allowance, created_at')
-            .single();
+        const newUser = await User.create({
+            username: username.toLowerCase(),
+            password_hash: passwordHash,
+            name,
+            email: email || null,
+            role,
+            avatar,
+            transport_allowance: transport_allowance || 0,
+            branch: branch || 'betfalme'
+        });
 
-        if (error) {
-            if (error.code === '23505') { // Postgres unique constraint violation
-                return res.status(409).json({ error: 'Username already exists' });
-            }
-            throw error;
-        }
-
-        res.status(201).json(data);
+        const { password_hash, ...userWithoutPassword } = newUser.toObject();
+        res.status(201).json({ ...userWithoutPassword, id: newUser._id });
     } catch (error) {
-        console.error('Create user error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Create user');
     }
 });
 
-// Update user (Admin only)
-router.put('/:id', authMiddleware, requireRole('admin'), async (req, res) => {
+// Update user (Admin or Supervisor)
+router.put('/:id', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
         const { name, email, role, transport_allowance, branch } = req.body;
 
-        const { data: user, error: fetchError } = await supabase
-            .from('users')
-            .select('id, role')
-            .eq('id', id)
-            .single();
+        const user = await User.findById(id);
 
-        if (fetchError || !user) {
+        if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        // Supervisor can only update staff
+        // Access control
         if (req.user.role === 'supervisor' && user.role !== 'staff') {
             return res.status(403).json({ error: 'Supervisors can only manage staff' });
+        }
+        if (req.user.role !== 'admin' && req.user.role !== 'supervisor') {
+            return res.status(403).json({ error: 'Access denied' });
         }
 
         const updateData = {};
@@ -99,20 +90,12 @@ router.put('/:id', authMiddleware, requireRole('admin'), async (req, res) => {
         if (role !== undefined) updateData.role = role;
         if (transport_allowance !== undefined) updateData.transport_allowance = transport_allowance;
         if (branch !== undefined) updateData.branch = branch;
-        updateData.updated_at = new Date().toISOString();
 
-        const { data: updatedUser, error: updateError } = await supabase
-            .from('users')
-            .update(updateData)
-            .eq('id', id)
-            .select('id, username, name, email, role, branch, avatar, transport_allowance, created_at')
-            .single();
+        const updatedUser = await User.findByIdAndUpdate(id, updateData, { new: true }).select('-password_hash');
 
-        if (updateError) throw updateError;
-        res.json(updatedUser);
+        res.json({ ...updatedUser.toObject(), id: updatedUser._id });
     } catch (error) {
-        console.error('Update user error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Update user');
     }
 });
 
@@ -122,21 +105,15 @@ router.delete('/:id', authMiddleware, requireRole('admin'), async (req, res) => 
         const { id } = req.params;
 
         // Prevent deleting yourself
-        if (parseInt(id) === req.user.id) {
+        if (id === req.user.id.toString()) {
             return res.status(400).json({ error: 'Cannot delete your own account' });
         }
 
-        const { error } = await supabase
-            .from('users')
-            .delete()
-            .eq('id', id);
-
-        if (error) throw error;
+        await User.findByIdAndDelete(id);
 
         res.json({ message: 'User deleted successfully' });
     } catch (error) {
-        console.error('Delete user error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Delete user');
     }
 });
 

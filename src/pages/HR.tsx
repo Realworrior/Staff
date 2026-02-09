@@ -1,75 +1,18 @@
 import { useState } from 'react';
-import { Search, Filter, Plus, Mail, Phone, MoreVertical, MapPin, Building } from 'lucide-react';
+import { Search, Filter, Plus, Mail, MoreVertical, Building } from 'lucide-react';
 import { Link } from 'react-router-dom';
-
-interface Employee {
-    id: string;
-    name: string;
-    role: string;
-    department: string;
-    email: string;
-    phone: string;
-    location: string;
-    status: 'active' | 'on_be leave' | 'terminated';
-    avatar: string;
-}
-
-const MOCK_EMPLOYEES: Employee[] = [
-    {
-        id: '1',
-        name: 'Sarah Wilson',
-        role: 'Senior Project Manager',
-        department: 'Operations',
-        email: 'sarah.wilson@company.com',
-        phone: '+1 (555) 123-4567',
-        location: 'New York, NY',
-        status: 'active',
-        avatar: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?auto=format&fit=crop&q=80&w=150&h=150',
-    },
-    {
-        id: '2',
-        name: 'Mike Chen',
-        role: 'Lead Developer',
-        department: 'Engineering',
-        email: 'mike.chen@company.com',
-        phone: '+1 (555) 234-5678',
-        location: 'San Francisco, CA',
-        status: 'active',
-        avatar: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=150&h=150',
-    },
-    {
-        id: '3',
-        name: 'Emma Davis',
-        role: 'UX Designer',
-        department: 'Design',
-        email: 'emma.davis@company.com',
-        phone: '+1 (555) 345-6789',
-        location: 'London, UK',
-        status: 'on_be leave',
-        avatar: 'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?auto=format&fit=crop&q=80&w=150&h=150',
-    },
-    {
-        id: '4',
-        name: 'James Wilson',
-        role: 'Sales Director',
-        department: 'Sales',
-        email: 'james.wilson@company.com',
-        phone: '+1 (555) 456-7890',
-        location: 'Chicago, IL',
-        status: 'active',
-        avatar: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=150&h=150',
-    },
-];
+import { useAuth } from '../context/AuthContext';
 
 export const HR = () => {
+    const { users, selectedBranch } = useAuth();
     const [searchTerm, setSearchTerm] = useState('');
-    const [employees] = useState<Employee[]>(MOCK_EMPLOYEES);
 
-    const filteredEmployees = employees.filter(emp =>
-        emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        emp.role.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        emp.department.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredEmployees = users
+        .filter(u => u.branch === selectedBranch)
+        .filter(emp =>
+            emp.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+            emp.role.toLowerCase().includes(searchTerm.toLowerCase())
+        );
 
     return (
         <div className="space-y-6 max-w-7xl mx-auto">
@@ -90,7 +33,7 @@ export const HR = () => {
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={20} />
                     <input
                         type="text"
-                        placeholder="Search employees by name, role, or department..."
+                        placeholder="Search employees by name, role, or branch..."
                         className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
@@ -128,38 +71,33 @@ export const HR = () => {
                             <div className="mt-6 space-y-3">
                                 <div className="flex items-center gap-3 text-gray-500 text-sm">
                                     <Building size={16} />
-                                    <span>{employee.department}</span>
-                                </div>
-                                <div className="flex items-center gap-3 text-gray-500 text-sm">
-                                    <MapPin size={16} />
-                                    <span>{employee.location}</span>
+                                    <span>{employee.branch || 'Main Office'}</span>
                                 </div>
                                 <div className="flex items-center gap-3 text-gray-500 text-sm">
                                     <Mail size={16} />
-                                    <span>{employee.email}</span>
-                                </div>
-                                <div className="flex items-center gap-3 text-gray-500 text-sm">
-                                    <Phone size={16} />
-                                    <span>{employee.phone}</span>
+                                    <span>{employee.username}@company.com</span>
                                 </div>
                             </div>
                         </div>
 
-                        <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 rounded-b-xl flex justify-between items-center">
-                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize
-                ${employee.status === 'active' ? 'bg-green-100 text-green-800' :
-                                    employee.status === 'on_be leave' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'}`}>
-                                {employee.status.replace('_', ' ')}
+                        <div className="px-6 py-4 bg-gray-50 dark:bg-gray-800/50 border-t border-gray-100 dark:border-gray-700/50 rounded-b-xl flex justify-between items-center">
+                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400">
+                                Active
                             </span>
                             <Link
                                 to={`/hr/${employee.id}`}
-                                className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
+                                className="text-sm font-medium text-indigo-600 hover:text-indigo-800 dark:text-indigo-400"
                             >
                                 View Profile
                             </Link>
                         </div>
                     </div>
                 ))}
+                {filteredEmployees.length === 0 && (
+                    <div className="col-span-full py-12 text-center text-gray-500">
+                        No employees found matching your search in this branch.
+                    </div>
+                )}
             </div>
         </div>
     );

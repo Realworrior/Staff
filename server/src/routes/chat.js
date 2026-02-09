@@ -1,9 +1,12 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const fs = require('fs');
-const supabase = require('../config/database');
+const { mongoose, supabase } = require('../config/database');
+const ChatChannel = require('../models/ChatChannel');
+const ChatMessage = require('../models/ChatMessage');
+const User = require('../models/User');
 const { authMiddleware } = require('../middleware/auth');
+const { handleError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -12,30 +15,19 @@ const storage = multer.memoryStorage();
 const upload = multer({ storage });
 
 // GET /channels
-// List all public channels and private channels I am a member of
 router.get('/channels', authMiddleware, async (req, res) => {
     try {
-        // In Supabase, we can use a complex query or just fetch what the user has access to.
-        // For simplicity and matching old logic:
-        const { data: channels, error } = await supabase
-            .from('chat_channels')
-            .select('*, channel_members!left(user_id)')
-            .or(`type.eq.public,type.eq.private,channel_members.user_id.eq.${req.user.id}`)
-            .order('type', { ascending: false })
-            .order('name', { ascending: true });
+        const channels = await ChatChannel.find({
+            $or: [
+                { type: 'public' },
+                { members: req.user.id }
+            ]
+        }).sort({ type: -1, name: 1 });
 
-        if (error) throw error;
-
-        // Remove the join data from the final response to keep it clean
-        const cleanedChannels = channels.map(({ channel_members, ...c }) => c);
-
-        // Filter unique by ID (since the join might create duplicates)
-        const uniqueChannels = Array.from(new Map(cleanedChannels.map(c => [c.id, c])).values());
-
-        res.json(uniqueChannels);
+        const mappedChannels = channels.map(c => ({ ...c.toObject(), id: c._id }));
+        res.json(mappedChannels);
     } catch (error) {
-        console.error('Fetch channels error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Fetch channels');
     }
 });
 
@@ -47,78 +39,43 @@ router.post('/channels', authMiddleware, async (req, res) => {
 
         const channelName = name.toLowerCase().replace(/\s+/g, '-');
 
-        const { data: newChannel, error } = await supabase
-            .from('chat_channels')
-            .insert([{
-                name: channelName,
-                description: description || null,
-                type: type || 'public',
-                created_by: req.user.id
-            }])
-            .select()
-            .single();
+        const channel = await ChatChannel.create({
+            name: channelName,
+            description: description || null,
+            type: type || 'public',
+            created_by: req.user.id,
+            members: [req.user.id] // Auto-join creator
+        });
 
-        if (error) {
-            if (error.code === '23505') {
-                return res.status(409).json({ error: 'Channel name already exists' });
-            }
-            throw error;
-        }
-
-        // Auto-join creator
-        await supabase.from('channel_members').insert([{
-            channel_id: newChannel.id,
-            user_id: req.user.id
-        }]);
-
-        res.status(201).json(newChannel);
+        res.status(201).json({ ...channel.toObject(), id: channel._id });
     } catch (error) {
-        console.error('Create channel error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Create channel');
     }
 });
 
 // GET /direct-messages
 router.get('/direct-messages', authMiddleware, async (req, res) => {
     try {
-        // This is a bit complex for a single Supabase query without a view.
-        // We'll perform it in a few steps or use raw SQL if needed.
-        // Step 1: Find all 'dm' channels I'm in
-        const { data: myDms, error } = await supabase
-            .from('channel_members')
-            .select('channel_id, chat_channels!inner(*)')
-            .eq('user_id', req.user.id)
-            .eq('chat_channels.type', 'dm');
+        const dms = await ChatChannel.find({
+            type: 'dm',
+            members: req.user.id
+        }).populate('members', 'id name avatar');
 
-        if (error) throw error;
-        if (!myDms.length) return res.json([]);
-
-        const channelIds = myDms.map(d => d.channel_id);
-
-        // Step 2: Get the other member and their user info for each channel
-        const { data: others, error: othersError } = await supabase
-            .from('channel_members')
-            .select('channel_id, users!inner(id, name, avatar)')
-            .in('channel_id', channelIds)
-            .neq('user_id', req.user.id);
-
-        if (othersError) throw othersError;
-
-        const results = myDms.map(dm => {
-            const other = others.find(o => o.channel_id === dm.channel_id);
+        const results = dms.map(dm => {
+            const other = dm.members.find(m => m._id.toString() !== req.user.id.toString());
             if (!other) return null;
             return {
-                ...dm.chat_channels,
-                target_user_name: other.users.name,
-                target_user_avatar: other.users.avatar,
-                target_user_id: other.users.id
+                ...dm.toObject(),
+                id: dm._id,
+                target_user_name: other.name,
+                target_user_avatar: other.avatar,
+                target_user_id: other._id
             };
         }).filter(Boolean);
 
         res.json(results);
     } catch (error) {
-        console.error('Fetch DMs error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Fetch DMs');
     }
 });
 
@@ -128,38 +85,23 @@ router.post('/dm', authMiddleware, async (req, res) => {
         const { targetUserId } = req.body;
         if (!targetUserId) return res.status(400).json({ error: 'Target user ID is required' });
 
-        const ids = [req.user.id, parseInt(targetUserId)].sort((a, b) => a - b);
+        const ids = [req.user.id, targetUserId].sort();
         const dmName = `dm_${ids[0]}_${ids[1]}`;
 
-        let { data: channel, error: fetchError } = await supabase
-            .from('chat_channels')
-            .select('*')
-            .eq('name', dmName)
-            .eq('type', 'dm')
-            .maybeSingle();
+        let channel = await ChatChannel.findOne({ name: dmName, type: 'dm' });
 
         if (!channel) {
-            const { data: newChannel, error: createError } = await supabase
-                .from('chat_channels')
-                .insert([{ name: dmName, type: 'dm', created_by: req.user.id }])
-                .select()
-                .single();
-
-            if (createError) throw createError;
-            channel = newChannel;
-
-            const members = [{ channel_id: channel.id, user_id: ids[0] }];
-            if (ids[0] !== ids[1]) {
-                members.push({ channel_id: channel.id, user_id: ids[1] });
-            }
-
-            await supabase.from('channel_members').insert(members);
+            channel = await ChatChannel.create({
+                name: dmName,
+                type: 'dm',
+                created_by: req.user.id,
+                members: [ids[0], ids[1]]
+            });
         }
 
-        res.json(channel);
+        res.json({ ...channel.toObject(), id: channel._id });
     } catch (error) {
-        console.error('DM creation error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'DM creation');
     }
 });
 
@@ -168,42 +110,30 @@ router.get('/channels/:id/messages', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
 
-        // Verify access
-        const { data: channel, error: accessError } = await supabase
-            .from('chat_channels')
-            .select('*, channel_members(user_id)')
-            .eq('id', id)
-            .or(`type.eq.public,channel_members.user_id.eq.${req.user.id}`)
-            .maybeSingle();
+        const channel = await ChatChannel.findById(id);
+        if (!channel) return res.status(404).json({ error: 'Channel not found' });
 
-        if (accessError || !channel) {
+        const isMember = channel.members.some(m => m.toString() === req.user.id);
+        if (channel.type !== 'public' && !isMember) {
             return res.status(403).json({ error: 'Access denied' });
         }
 
-        const { data: messages, error } = await supabase
-            .from('chat_messages')
-            .select(`
-                *,
-                users(name, avatar),
-                message_reactions(emoji, user_id)
-            `)
-            .eq('channel_id', id)
-            .order('created_at', { ascending: true })
+        const messages = await ChatMessage.find({ channel_id: id })
+            .populate('user_id', 'name avatar')
+            .sort({ created_at: 1 })
             .limit(100);
 
-        if (error) throw error;
-
         const processedMessages = messages.map(m => ({
-            ...m,
-            user_name: m.users.name,
-            user_avatar: m.users.avatar,
-            reactions: m.message_reactions || []
+            ...m.toObject(),
+            id: m._id,
+            user_name: m.user_id ? m.user_id.name : 'Unknown',
+            user_avatar: m.user_id ? m.user_id.avatar : null,
+            reactions: m.reactions || []
         }));
 
         res.json(processedMessages);
     } catch (error) {
-        console.error('Fetch messages error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Fetch messages');
     }
 });
 
@@ -216,36 +146,35 @@ router.post('/messages', authMiddleware, async (req, res) => {
             return res.status(400).json({ error: 'Channel ID and content/file are required' });
         }
 
-        const { data: message, error } = await supabase
-            .from('chat_messages')
-            .insert([{
-                channel_id: channelId,
-                user_id: req.user.id,
-                content: content || '',
-                file_url: file_url || null,
-                file_name: file_name || null,
-                file_type: file_type || null
-            }])
-            .select('*, users(name, avatar)')
-            .single();
+        const message = await ChatMessage.create({
+            channel_id: channelId,
+            user_id: req.user.id,
+            content: content || '',
+            file_url: file_url || null,
+            file_name: file_name || null,
+            file_type: file_type || null
+        });
 
-        if (error) throw error;
+        const populated = await ChatMessage.findById(message._id).populate('user_id', 'name avatar');
 
         res.status(201).json({
-            ...message,
-            user_name: message.users.name,
-            user_avatar: message.users.avatar,
+            ...populated.toObject(),
+            id: populated._id,
+            user_name: populated.user_id.name,
+            user_avatar: populated.user_id.avatar,
             reactions: []
         });
     } catch (error) {
-        console.error('Create message error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Create message');
     }
 });
 
 // POST /upload
 router.post('/upload', authMiddleware, upload.single('file'), async (req, res) => {
     try {
+        if (!supabase) {
+            return res.status(503).json({ error: 'File upload is not configured (Supabase missing).' });
+        }
         if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
         const file = req.file;
@@ -266,7 +195,6 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
             return res.status(500).json({ error: 'Failed to upload to cloud storage' });
         }
 
-        // Get public URL
         const { data: { publicUrl } } = supabase.storage
             .from('chat-uploads')
             .getPublicUrl(filePath);
@@ -277,8 +205,7 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
             type: file.mimetype
         });
     } catch (error) {
-        console.error('Upload error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Upload file');
     }
 });
 
@@ -287,28 +214,24 @@ router.post('/reactions', authMiddleware, async (req, res) => {
     try {
         const { messageId, emoji } = req.body;
 
-        const { data: existing, error: checkError } = await supabase
-            .from('message_reactions')
-            .select('id')
-            .eq('message_id', messageId)
-            .eq('user_id', req.user.id)
-            .eq('emoji', emoji)
-            .maybeSingle();
+        const message = await ChatMessage.findById(messageId);
+        if (!message) return res.status(404).json({ error: 'Message not found' });
 
-        if (existing) {
-            await supabase.from('message_reactions').delete().eq('id', existing.id);
+        const existingIndex = message.reactions.findIndex(
+            r => r.user_id.toString() === req.user.id.toString() && r.emoji === emoji
+        );
+
+        if (existingIndex > -1) {
+            message.reactions.splice(existingIndex, 1);
+            await message.save();
             res.json({ action: 'removed', emoji, messageId, userId: req.user.id });
         } else {
-            await supabase.from('message_reactions').insert([{
-                message_id: messageId,
-                user_id: req.user.id,
-                emoji
-            }]);
+            message.reactions.push({ user_id: req.user.id, emoji });
+            await message.save();
             res.json({ action: 'added', emoji, messageId, userId: req.user.id });
         }
     } catch (error) {
-        console.error('Reaction error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Reaction toggle');
     }
 });
 

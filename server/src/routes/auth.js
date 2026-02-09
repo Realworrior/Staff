@@ -1,8 +1,9 @@
 const express = require('express');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
-const supabase = require('../config/database');
+const User = require('../models/User');
 const { authMiddleware } = require('../middleware/auth');
+const { handleError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -13,14 +14,10 @@ router.post('/login', async (req, res) => {
 
         console.log(`🔑 Login attempt for user: ${username}`);
 
-        const { data: user, error: fetchError } = await supabase
-            .from('users')
-            .select('*')
-            .eq('username', username.toLowerCase())
-            .single();
+        const user = await User.findOne({ username: username.toLowerCase() });
 
-        if (fetchError || !user) {
-            console.warn(`❌ Login failed: User '${username}' not found in Supabase.`);
+        if (!user) {
+            console.warn(`❌ Login failed: User '${username}' not found in MongoDB.`);
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
@@ -34,41 +31,35 @@ router.post('/login', async (req, res) => {
         console.log(`✅ Login successful for user: ${username}`);
 
         const token = jwt.sign(
-            { id: user.id, username: user.username, role: user.role },
+            { id: user._id, username: user.username, role: user.role },
             process.env.JWT_SECRET,
             { expiresIn: process.env.JWT_EXPIRES_IN }
         );
 
         // Remove password from response
-        const { password_hash, ...userWithoutPassword } = user;
+        const { password_hash, ...userWithoutPassword } = user.toObject();
 
         res.json({
             token,
-            user: userWithoutPassword
+            user: { ...userWithoutPassword, id: user._id }
         });
     } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Login');
     }
 });
 
 // Get current user
 router.get('/me', authMiddleware, async (req, res) => {
     try {
-        const { data: user, error } = await supabase
-            .from('users')
-            .select('id, username, name, email, role, branch, avatar, created_at')
-            .eq('id', req.user.id)
-            .single();
+        const user = await User.findById(req.user.id).select('-password_hash');
 
-        if (error || !user) {
+        if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        res.json(user);
+        res.json({ ...user.toObject(), id: user._id });
     } catch (error) {
-        console.error('Get user error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Get current user');
     }
 });
 

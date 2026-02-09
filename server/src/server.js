@@ -4,11 +4,40 @@ const cors = require('cors');
 const path = require('path');
 
 // Initialize database
-const supabase = require('./config/database');
-const { initDatabase } = require('./utils/db-init');
+const { mongoose, connectPromise } = require('./config/database');
+const User = require('./models/User');
+const bcrypt = require('bcrypt');
 
-// Run automated initialization
-initDatabase();
+// Run automated initialization for MongoDB
+const { seedStaff } = require('./utils/userSeed');
+
+const seedData = async () => {
+    try {
+        // 1. Seed Admin
+        const adminExists = await User.findOne({ username: 'admin' });
+        if (!adminExists) {
+            console.log('🚀 No admin found. Seeding default admin user...');
+            const hash = bcrypt.hashSync('falmebet123', 10);
+            await User.create({
+                username: 'admin',
+                password_hash: hash,
+                name: 'System Admin',
+                role: 'admin',
+                branch: 'betfalme'
+            });
+            console.log('✅ Default admin user provisioned (admin / falmebet123).');
+        } else {
+            console.log('ℹ️ Admin user already exists.');
+        }
+
+        // 2. Seed Staff
+        await seedStaff();
+
+    } catch (err) {
+        console.error('❌ Data seeding failed:', err.message);
+        console.error(err.stack);
+    }
+};
 
 const authRoutes = require('./routes/auth');
 const userRoutes = require('./routes/users');
@@ -104,7 +133,14 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'ok', message: 'Falmebet API is running' });
+    const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
+    const dbStatus = states[mongoose.connection.readyState] || 'unknown';
+
+    res.json({
+        status: dbStatus === 'connected' ? 'ok' : 'error',
+        database: dbStatus,
+        message: dbStatus === 'connected' ? 'Falmebet API is running' : 'Database connection issues'
+    });
 });
 
 // Error handling middleware
@@ -121,7 +157,17 @@ const startServer = () => {
 };
 
 if (require.main === module) {
-    startServer();
+    (async () => {
+        try {
+            await connectPromise;
+            console.log('🔗 Database ready, running seed...');
+            await seedData();
+            startServer();
+        } catch (err) {
+            console.error('❌ Server startup failed:', err.message);
+            process.exit(1);
+        }
+    })();
 }
 
 module.exports = { app, server };

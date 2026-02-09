@@ -1,6 +1,7 @@
 const express = require('express');
-const supabase = require('../config/database');
+const Schedule = require('../models/Schedule');
 const { authMiddleware, requireRole } = require('../middleware/auth');
+const { handleError } = require('../utils/errors');
 
 const router = express.Router();
 
@@ -9,40 +10,32 @@ router.get('/', authMiddleware, async (req, res) => {
     try {
         const { start_date, end_date, user_id, branch } = req.query;
 
-        let query = supabase
-            .from('schedules')
-            .select('*, users!inner(name, role)');
+        let query = {};
+        if (user_id) query.user_id = user_id;
+        if (start_date || end_date) {
+            query.date = {};
+            if (start_date) query.date.$gte = new Date(start_date);
+            if (end_date) query.date.$lte = new Date(end_date);
+        }
 
-        if (user_id) {
-            query = query.eq('user_id', user_id);
-        }
-        if (start_date) {
-            query = query.gte('date', start_date);
-        }
-        if (end_date) {
-            query = query.lte('date', end_date);
-        }
+        let schedules = await Schedule.find(query)
+            .populate('user_id', 'name role branch')
+            .sort({ date: 1, start_time: 1 });
+
         if (branch) {
-            query = query.eq('branch', branch);
+            schedules = schedules.filter(s => s.user_id && s.user_id.branch === branch);
         }
 
-        const { data: records, error } = await query
-            .order('date', { ascending: true })
-            .order('start_time', { ascending: true });
-
-        if (error) throw error;
-
-        // Flatten user info to match old schema
-        const flattened = records.map(s => ({
-            ...s,
-            user_name: s.users.name,
-            user_role: s.users.role
+        const mappedSchedules = schedules.map(s => ({
+            ...s.toObject(),
+            id: s._id,
+            user_name: s.user_id ? s.user_id.name : 'Unknown',
+            user_role: s.user_id ? s.user_id.role : 'Unknown'
         }));
 
-        res.json(flattened);
+        res.json(mappedSchedules);
     } catch (error) {
-        console.error('Get schedules error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Get schedules');
     }
 });
 
@@ -55,32 +48,20 @@ router.post('/', authMiddleware, requireRole('admin'), async (req, res) => {
             return res.status(400).json({ error: 'user_id, date, start_time, and end_time are required' });
         }
 
-        const { data, error } = await supabase
-            .from('schedules')
-            .insert([{
-                user_id,
-                date,
-                start_time,
-                end_time,
-                shift_type,
-                notes,
-                created_by: req.user.id,
-                branch: branch || 'betfalme'
-            }])
-            .select()
-            .single();
+        const schedule = await Schedule.create({
+            user_id,
+            date: new Date(date),
+            start_time,
+            end_time,
+            shift_type,
+            notes,
+            created_by: req.user.id,
+            branch: branch || 'betfalme'
+        });
 
-        if (error) {
-            if (error.code === '23505') { // Unique constraint violation
-                return res.status(409).json({ error: 'Schedule already exists for this user at this time' });
-            }
-            throw error;
-        }
-
-        res.status(201).json(data);
+        res.status(201).json({ ...schedule.toObject(), id: schedule._id });
     } catch (error) {
-        console.error('Create schedule error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Create schedule');
     }
 });
 
@@ -95,7 +76,7 @@ router.post('/bulk', authMiddleware, requireRole('admin'), async (req, res) => {
 
         const mappedSchedules = inputSchedules.map(s => ({
             user_id: s.user_id,
-            date: s.date,
+            date: new Date(s.date),
             start_time: s.start_time,
             end_time: s.end_time,
             shift_type: s.shift_type || null,
@@ -104,16 +85,12 @@ router.post('/bulk', authMiddleware, requireRole('admin'), async (req, res) => {
             branch: s.branch || 'betfalme'
         }));
 
-        const { error } = await supabase
-            .from('schedules')
-            .insert(mappedSchedules);
-
-        if (error) throw error;
+        // MongoDB insertMany handles multiple docs
+        await Schedule.insertMany(mappedSchedules);
 
         res.status(201).json({ message: `${inputSchedules.length} schedules created successfully` });
     } catch (error) {
-        console.error('Bulk create error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Bulk create schedules');
     }
 });
 
@@ -123,34 +100,21 @@ router.put('/:id', authMiddleware, requireRole('admin'), async (req, res) => {
         const { id } = req.params;
         const { start_time, end_time, shift_type, notes } = req.body;
 
-        const { data: schedule, error: fetchError } = await supabase
-            .from('schedules')
-            .select('id')
-            .eq('id', id)
-            .single();
-
-        if (fetchError || !schedule) {
-            return res.status(404).json({ error: 'Schedule not found' });
-        }
-
         const updateData = {};
         if (start_time !== undefined) updateData.start_time = start_time;
         if (end_time !== undefined) updateData.end_time = end_time;
         if (shift_type !== undefined) updateData.shift_type = shift_type;
         if (notes !== undefined) updateData.notes = notes;
 
-        const { data: updated, error: updateError } = await supabase
-            .from('schedules')
-            .update(updateData)
-            .eq('id', id)
-            .select()
-            .single();
+        const updated = await Schedule.findByIdAndUpdate(id, updateData, { new: true });
 
-        if (updateError) throw updateError;
-        res.json(updated);
+        if (!updated) {
+            return res.status(404).json({ error: 'Schedule not found' });
+        }
+
+        res.json({ ...updated.toObject(), id: updated._id });
     } catch (error) {
-        console.error('Update schedule error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Update schedule');
     }
 });
 
@@ -158,18 +122,10 @@ router.put('/:id', authMiddleware, requireRole('admin'), async (req, res) => {
 router.delete('/:id', authMiddleware, requireRole('admin'), async (req, res) => {
     try {
         const { id } = req.params;
-
-        const { error } = await supabase
-            .from('schedules')
-            .delete()
-            .eq('id', id);
-
-        if (error) throw error;
-
+        await Schedule.findByIdAndDelete(id);
         res.json({ message: 'Schedule deleted successfully' });
     } catch (error) {
-        console.error('Delete schedule error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Delete schedule');
     }
 });
 
@@ -182,20 +138,16 @@ router.delete('/range/bulk', authMiddleware, requireRole('admin'), async (req, r
             return res.status(400).json({ error: 'start_date and end_date are required' });
         }
 
-        let query = supabase.from('schedules').delete().gte('date', start_date).lte('date', end_date);
+        const query = {
+            date: { $gte: new Date(start_date), $lte: new Date(end_date) }
+        };
+        if (branch) query.branch = branch;
 
-        if (branch) {
-            query = query.eq('branch', branch);
-        }
-
-        const { error } = await query;
-
-        if (error) throw error;
+        await Schedule.deleteMany(query);
 
         res.json({ message: `Schedules deleted successfully in range` });
     } catch (error) {
-        console.error('Delete range error:', error);
-        res.status(500).json({ error: 'Internal server error' });
+        handleError(res, error, 'Delete schedules by range');
     }
 });
 
