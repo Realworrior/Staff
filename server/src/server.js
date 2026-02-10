@@ -132,6 +132,14 @@ app.get('/', (req, res) => {
     res.json({ status: 'ok', message: 'Falmebet API Server is running. Access endpoints at /api/...' });
 });
 
+// Base API index – helps avoid confusing 404 when visiting /api directly
+app.get('/api', (req, res) => {
+    res.json({
+        status: 'ok',
+        message: 'Falmebet API root. Key endpoints: /api/health, /api/auth/login, /api/users, /api/attendance, /api/schedules, /api/account-logs, /api/payroll, /api/chat',
+    });
+});
+
 app.get('/api/health', (req, res) => {
     const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
     const dbStatus = states[mongoose.connection.readyState] || 'unknown';

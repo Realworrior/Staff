@@ -104,13 +104,38 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
                 message: error.message,
                 config_url: error.config?.url
             });
+
             if (error.code === 'ERR_NETWORK') {
                 return 'Network Error. Server unreachable.';
             }
-            if (error.response?.status === 401) {
-                return error.response?.data?.error || 'Invalid credentials.';
+
+            const status = error.response?.status;
+            const data = error.response?.data;
+
+            // Always coerce API error payload into a human-readable string
+            const normalizeMessage = (): string => {
+                if (!data) return 'Login failed. Please try again.';
+
+                // If backend sent a top-level string
+                if (typeof data === 'string') return data;
+
+                // Common shapes: { error: 'msg' } or { message: 'msg' }
+                if (typeof data.error === 'string') return data.error;
+                if (typeof data.message === 'string') return data.message;
+
+                // Nested: { error: { code, message } }
+                if (data.error && typeof data.error.message === 'string') {
+                    return data.error.message;
+                }
+
+                return 'Login failed. Please try again.';
+            };
+
+            if (status === 401) {
+                return normalizeMessage() || 'Invalid credentials.';
             }
-            return error.response?.data?.message || error.response?.data?.error || 'Login failed. Please try again.';
+
+            return normalizeMessage();
         }
     };
 

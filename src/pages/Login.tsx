@@ -25,12 +25,25 @@ export const Login = () => {
         const user = username.toLowerCase().trim();
         const pass = password.trim();
 
-        const errorMsg = await login(user, pass);
+        try {
+            const errorMsg = await login(user, pass);
 
-        if (!errorMsg) {
-            navigate('/');
-        } else {
-            setError(errorMsg);
+            if (!errorMsg) {
+                navigate('/');
+            } else {
+                // Extra safety: never let a non-string value reach JSX
+                setError(typeof errorMsg === 'string' ? errorMsg : 'Login failed. Please try again.');
+            }
+        } catch (err: any) {
+            console.error('Unexpected login error:', err);
+            const data = err?.response?.data;
+            const normalized =
+                (typeof data === 'string' && data) ||
+                (typeof data?.error === 'string' && data.error) ||
+                (typeof data?.message === 'string' && data.message) ||
+                err?.message ||
+                'Login failed. Please try again.';
+            setError(normalized);
         }
     };
 
