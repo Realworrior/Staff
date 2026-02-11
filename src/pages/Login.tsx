@@ -39,6 +39,7 @@ export const Login = () => {
             const data = err?.response?.data;
             const normalized =
                 (typeof data === 'string' && data) ||
+                (typeof data?.debug_message === 'string' && `Server Error: ${data.debug_message}`) ||
                 (typeof data?.error === 'string' && data.error) ||
                 (typeof data?.message === 'string' && data.message) ||
                 err?.message ||
