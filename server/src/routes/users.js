@@ -109,9 +109,39 @@ router.delete('/:id', authMiddleware, requireRole('admin'), async (req, res) => 
             return res.status(400).json({ error: 'Cannot delete your own account' });
         }
 
+        const user = await User.findById(id);
+        if (!user) {
+            return res.status(404).json({ error: 'User not found' });
+        }
+
+        // Cascade delete related data
+        // 1. Schedules
+        const Schedule = require('../models/Schedule');
+        await Schedule.deleteMany({ user_id: id });
+
+        // 2. Attendance
+        const Attendance = require('../models/Attendance');
+        await Attendance.deleteMany({ user_id: id });
+
+        // 3. Payroll
+        const Payroll = require('../models/Payroll');
+        await Payroll.deleteMany({ user_id: id });
+
+        // 4. Chat Messages
+        const ChatMessage = require('../models/ChatMessage');
+        await ChatMessage.deleteMany({ user_id: id });
+
+        // 5. Remove from Chat Channels
+        const ChatChannel = require('../models/ChatChannel');
+        await ChatChannel.updateMany(
+            { members: id },
+            { $pull: { members: id } }
+        );
+
+        // Finally, delete the user
         await User.findByIdAndDelete(id);
 
-        res.json({ message: 'User deleted successfully' });
+        res.json({ message: 'User and all related data deleted successfully' });
     } catch (error) {
         handleError(res, error, 'Delete user');
     }

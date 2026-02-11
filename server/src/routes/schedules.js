@@ -151,4 +151,145 @@ router.delete('/range/bulk', authMiddleware, requireRole('admin'), async (req, r
     }
 });
 
+const multer = require('multer');
+const xlsx = require('xlsx');
+const User = require('../models/User');
+const bcrypt = require('bcrypt');
+
+// Configure Multer for memory storage
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Import Rota from Excel (Admin only)
+router.post('/import', authMiddleware, requireRole('admin'), upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ error: 'No file uploaded' });
+        }
+
+        const workbook = xlsx.read(req.file.buffer, { type: 'buffer' });
+        const sheetName = workbook.SheetNames[0];
+        const sheet = workbook.Sheets[sheetName];
+        const data = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: null });
+
+        if (data.length < 2) {
+            return res.status(400).json({ error: 'Excel file is empty or invalid format' });
+        }
+
+        // Row 1: Headers (Date, Name1, Name2, ...)
+        const headers = data[0];
+        const staffNames = headers.slice(1); // Skip 'Date' column
+
+        // Auto-create missing users
+        const userMap = new Map(); // Name -> UserID
+        const defaultHash = bcrypt.hashSync('falmebet123', 10);
+        let newUsersCount = 0;
+
+        for (const name of staffNames) {
+            if (!name) continue;
+            const cleanName = name.toString().trim();
+            // Try to find existing user (case-insensitive)
+            let user = await User.findOne({ name: { $regex: new RegExp(`^${cleanName}$`, 'i') } });
+
+            if (!user) {
+                // Create new user
+                const username = cleanName.toLowerCase().replace(/\s+/g, '');
+                user = await User.create({
+                    name: cleanName,
+                    username: `${username}_${Math.floor(Math.random() * 1000)}`, // Ensure uniqueness
+                    password_hash: defaultHash,
+                    role: 'staff',
+                    branch: req.body.branch || 'betfalme'
+                });
+                newUsersCount++;
+                console.log(`✨ Auto-created user: ${cleanName} (${user.username})`);
+            }
+            userMap.set(cleanName, user._id);
+        }
+
+        // Parse Rows
+        const schedulesToInsert = [];
+        const rows = data.slice(1);
+        let branch = req.body.branch || 'betfalme';
+
+        // Helper to parse Excel date serial number or string
+        const parseDate = (value) => {
+            if (!value) return null;
+            if (typeof value === 'number') {
+                // Excel serial date to JS Date
+                return new Date(Math.round((value - 25569) * 86400 * 1000));
+            }
+            return new Date(value);
+        };
+
+        for (const row of rows) {
+            const dateVal = row[0];
+            if (!dateVal) continue;
+
+            const date = parseDate(dateVal);
+            if (isNaN(date.getTime())) continue;
+
+            const dateStr = date.toISOString().split('T')[0];
+
+            // Iterate columns for each staff
+            staffNames.forEach((name, index) => {
+                if (!name) return;
+                const cleanName = name.toString().trim();
+                const userId = userMap.get(cleanName);
+                const shiftCode = row[index + 1]; // +1 because index 0 is Date
+
+                if (userId && shiftCode) {
+                    const code = shiftCode.toString().trim().toUpperCase();
+                    let start = null, end = null;
+
+                    if (code === 'AM') { start = '07:30:00'; end = '15:30:00'; }
+                    else if (code === 'PM') { start = '15:30:00'; end = '22:30:00'; }
+                    else if (code === 'NT') { start = '22:30:00'; end = '07:30:00'; }
+
+                    if (start && end) {
+                        schedulesToInsert.push({
+                            user_id: userId,
+                            date: new Date(dateStr),
+                            start_time: start,
+                            end_time: end,
+                            shift_type: code,
+                            branch: branch,
+                            notes: 'Imported via Excel',
+                            created_by: req.user.id
+                        });
+                    }
+                }
+            });
+        }
+
+        // Clean existing for this range (Optional: maybe safer to just add?)
+        // For now, let's just append/upsert logic manually if needed, 
+        // but user requested "populate", usually implies overwrite or fill. 
+        // Plan said "populate DB directly". 
+        // Let's delete range first to avoid duplicates if re-importing same file?
+        if (schedulesToInsert.length > 0) {
+            const dates = schedulesToInsert.map(s => s.date.getTime());
+            const minDate = new Date(Math.min(...dates));
+            const maxDate = new Date(Math.max(...dates));
+
+            await Schedule.deleteMany({
+                date: { $gte: minDate, $lte: maxDate },
+                branch: branch
+            });
+
+            await Schedule.insertMany(schedulesToInsert);
+        }
+
+        res.json({
+            message: `Import successful. Processed ${rows.length} days.`,
+            stats: {
+                newUsers: newUsersCount,
+                shiftsCreated: schedulesToInsert.length
+            }
+        });
+
+    } catch (error) {
+        handleError(res, error, 'Import Excel Rota');
+    }
+});
+
 module.exports = router;

@@ -218,87 +218,45 @@ export const RotaGenerator = () => {
         document.body.removeChild(link);
     };
 
-    const handleImportCSV = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const handleImportExcel = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (!file) return;
 
-        Papa.parse(file, {
-            header: true,
-            skipEmptyLines: true,
-            complete: (results) => {
-                const data = results.data as Record<string, string>[];
-                if (data.length === 0) {
-                    alert('No data found in CSV');
-                    return;
-                }
+        // Basic validation
+        if (!file.name.match(/\.(xlsx|xls)$/)) {
+            alert('Please upload an Excel file (.xlsx or .xls)');
+            return;
+        }
 
-                try {
-                    // Detect if this is a supported format
-                    // Needs 'Date' and staff names
-                    const headers = results.meta.fields || [];
-                    if (!headers.includes('Date')) {
-                        alert('CSV must have a "Date" column');
-                        return;
-                    }
+        setLoadingExisting(true);
+        try {
+            const response = await schedulesAPI.importRota(file, selectedBranch);
+            const { message, stats } = response.data;
 
-                    const importedSchedule: DailySchedule[] = [];
+            alert(`${message}\n\nRunning Stats:\n✨ New Users Created: ${stats.newUsers}\n📅 Shifts Generated: ${stats.shiftsCreated}`);
 
-                    data.forEach(row => {
-                        const dateStr = row['Date'];
-                        if (!dateStr || !isValidDate(dateStr)) return;
+            // Refresh view
+            // Clear current schedule state first to force reload visual effect
+            setSchedule([]);
+            setGenerated(false);
 
-                        const assignments = {
-                            AM: [] as RotaEmployee[],
-                            PM: [] as RotaEmployee[],
-                            NT: [] as RotaEmployee[],
-                            OFF: [] as RotaEmployee[]
-                        };
+            // Re-fetch (logic inside useEffect will trigger because we're not changing dependencies, 
+            // so we need to manually trigger the fetch or rely on a trigger state)
+            // Actually, the useEffect depends on startDate/employees. 
+            // Let's just manually call the fetch logic or force a re-mount.
+            // Simplest: Reload window or re-trigger fetch.
+            // Let's reload the page to be safe and ensure all new users are loaded too? 
+            // Better: update employees list then fetch schedule.
+            window.location.reload();
 
-                        // Iterate through employees to find their assignment in this row
-                        employees.forEach(emp => {
-                            // Find column matching employee name
-                            const colName = headers.find(h => h.trim().toLowerCase() === emp.name.toLowerCase());
-                            if (colName) {
-                                const val = row[colName]?.trim().toUpperCase();
-                                if (val === 'AM') assignments.AM.push(emp);
-                                else if (val === 'PM') assignments.PM.push(emp);
-                                else if (val === 'NT') assignments.NT.push(emp);
-                                else assignments.OFF.push(emp);
-                            } else {
-                                // Default OFF if not in CSV or name mismatch
-                                assignments.OFF.push(emp);
-                            }
-                        });
-
-
-                        importedSchedule.push({
-                            date: dateStr,
-                            assignments,
-                            warnings: []
-                        });
-                    });
-
-                    if (importedSchedule.length > 0) {
-                        // Sort by date
-                        importedSchedule.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                        setSchedule(importedSchedule);
-                        setStartDate(importedSchedule[0].date); // Set view to start of imported data
-                        setGenerated(true);
-                        setSaveSuccess(false); // Mark as unsaved so user knows to click save
-                        alert(`Successfully imported ${importedSchedule.length} days of rota! Please review and click "Save to Database".`);
-                    } else {
-                        alert('Could not parse any valid schedule data.');
-                    }
-
-                } catch (err) {
-                    console.error('Import error:', err);
-                    alert('Failed to process CSV data.');
-                }
-
-                // Reset input
-                if (fileInputRef.current) fileInputRef.current.value = '';
-            }
-        });
+        } catch (error: any) {
+            console.error('Import failed:', error);
+            const msg = error.response?.data?.error || 'Failed to populate rota from file.';
+            alert(`Import Error: ${msg}`);
+        } finally {
+            setLoadingExisting(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
     };
 
     const isValidDate = (dateString: string) => {
@@ -405,12 +363,356 @@ export const RotaGenerator = () => {
                         onChange={handleImportCSV}
                         className="hidden"
                     />
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { Download, RefreshCw, AlertCircle, CheckCircle, Save, Loader2, Upload } from 'lucide-react';
+import { generateRota } from '../utils/rotaGenerator';
+import type { RotaEmployee, DailySchedule, ShiftType } from '../types/rota';
+import { format, startOfMonth, addMonths, endOfMonth, eachDayOfInterval } from 'date-fns';
+import { clsx } from 'clsx';
+import { useAuth, type User } from '../context/AuthContext';
+import { schedulesAPI } from '../services/api';
+
+export const RotaGenerator = () => {
+    const { users, selectedBranch: globalBranch } = useAuth();
+    const [employees, setEmployees] = useState<RotaEmployee[]>([]);
+    const [schedule, setSchedule] = useState<DailySchedule[]>([]);
+    const [startDate, setStartDate] = useState(format(startOfMonth(addMonths(new Date(), 1)), 'yyyy-MM-dd'));
+    const [generated, setGenerated] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [loadingExisting, setLoadingExisting] = useState(false);
+    const [saveSuccess, setSaveSuccess] = useState(false);
+    const [selectedBranch, setSelectedBranch] = useState<string>(globalBranch);
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // Sync local branch when global branch changes
+    useEffect(() => {
+        setSelectedBranch(globalBranch);
+    }, [globalBranch]);
+    // Sync employees with users from AuthContext
+    useEffect(() => {
+        const staffUsers = users
+            .filter((u: User) => u.role !== 'admin' && u.role !== 'supervisor' && u.branch === selectedBranch) // Filter by branch
+            .map((u: User) => ({
+                id: u.id,
+                name: u.name,
+                role: 'Support Agent', // Force role display
+                avatar: u.avatar || `https://ui-avatars.com/api/?name=${encodeURIComponent(u.name)}&background=10B981&color=fff`
+            }));
+        setEmployees(staffUsers);
+    }, [users, selectedBranch]);
+
+    const handleGenerate = () => {
+        if (employees.length === 0) {
+            alert("No staff members found to generate a rota for.");
+            return;
+        }
+        const start = new Date(startDate);
+        const end = endOfMonth(start);
+        const days = eachDayOfInterval({ start, end });
+
+        const newSchedule = generateRota(employees, start, days.length);
+        setSchedule(newSchedule);
+        setGenerated(true);
+        setSaveSuccess(false);
+    };
+
+    // Load existing Rota from DB on Mount/Month Change
+    useEffect(() => {
+        const fetchExistingRota = async () => {
+            if (employees.length === 0) return;
+
+            setLoadingExisting(true);
+            try {
+                const start = new Date(startDate);
+                const end = endOfMonth(start);
+                const params = {
+                    start_date: format(start, 'yyyy-MM-dd'),
+                    end_date: format(end, 'yyyy-MM-dd'),
+                    branch: selectedBranch
+                };
+
+                const response = await schedulesAPI.getAll(params);
+                const existingShifts = response.data;
+
+                if (existingShifts.length > 0) {
+                    // Reconstruct DailySchedule[] from flat shifts
+                    const days = eachDayOfInterval({ start, end });
+                    const reconstructed: DailySchedule[] = days.map(day => {
+                        const dateStr = format(day, 'yyyy-MM-dd');
+                        const dayShifts = existingShifts.filter((s: any) => s.date === dateStr);
+
+                        const assignments = {
+                            AM: dayShifts.filter((s: any) => s.shift_type === 'AM').map((s: any) =>
+                                employees.find(e => e.id.toString() === s.user_id.toString()) || { id: s.user_id, name: s.user_name, role: 'Staff', avatar: '' }
+                            ),
+                            PM: dayShifts.filter((s: any) => s.shift_type === 'PM').map((s: any) =>
+                                employees.find(e => e.id.toString() === s.user_id.toString()) || { id: s.user_id, name: s.user_name, role: 'Staff', avatar: '' }
+                            ),
+                            NT: dayShifts.filter((s: any) => s.shift_type === 'NT').map((s: any) =>
+                                employees.find(e => e.id.toString() === s.user_id.toString()) || { id: s.user_id, name: s.user_name, role: 'Staff', avatar: '' }
+                            ),
+                            OFF: [] as RotaEmployee[] // We don't track OFF explicitly in DB, so we populate anyone NOT in assignments as OFF below
+                        };
+
+                        // Populate OFF
+                        const assignedIds = new Set([...assignments.AM, ...assignments.PM, ...assignments.NT].map((e: any) => e.id.toString()));
+                        assignments.OFF = employees.filter(e => !assignedIds.has(e.id.toString()));
+
+                        return {
+                            date: dateStr,
+                            assignments,
+                            warnings: []
+                        };
+                    });
+
+                    setSchedule(reconstructed);
+                    setGenerated(true);
+                    setSaveSuccess(true); // It's already saved effectively
+                } else {
+                    // No data, reset
+                    setSchedule([]);
+                    setGenerated(false);
+                    setSaveSuccess(false);
+                }
+            } catch (error) {
+                console.error("Failed to load existing rota", error);
+            } finally {
+                setLoadingExisting(false);
+            }
+        };
+
+        const timeoutId = setTimeout(() => {
+            fetchExistingRota();
+        }, 500); // Debounce slightly to let employees load
+
+        return () => clearTimeout(timeoutId);
+
+    }, [startDate, employees.length, selectedBranch]); // Depend on branch change
+
+    const handleSave = async () => {
+        if (schedule.length === 0) return;
+
+        // Confirmation for overwrite
+        if (!window.confirm("This will overwrite any existing schedule for this month. Continue?")) return;
+
+        setSaving(true);
+        setSaveSuccess(false);
+        try {
+            // 1. Clear existing for range
+            // Get min and max date from schedule
+            const dates = schedule.map(d => new Date(d.date).getTime());
+            const minDate = new Date(Math.min(...dates));
+            const maxDate = new Date(Math.max(...dates));
+
+            await schedulesAPI.deleteRange({
+                start_date: format(minDate, 'yyyy-MM-dd'),
+                end_date: format(maxDate, 'yyyy-MM-dd'),
+                branch: selectedBranch
+            });
+
+            // 2. Insert New
+            const apiSchedules: any[] = [];
+            schedule.forEach(day => {
+                const date = day.date;
+                // Helper to push schedule
+                const pushShift = (list: RotaEmployee[], type: string, start: string, end: string) => {
+                    list.forEach(emp => {
+                        apiSchedules.push({
+                            user_id: Number(emp.id),
+                            date,
+                            start_time: start,
+                            end_time: end,
+                            shift_type: type,
+                            branch: selectedBranch,
+                            notes: 'Generated Rota'
+                        });
+                    });
+                };
+
+                pushShift(day.assignments.AM, 'AM', '07:30:00', '15:30:00');
+                pushShift(day.assignments.PM, 'PM', '15:30:00', '22:30:00');
+                pushShift(day.assignments.NT, 'NT', '22:30:00', '07:30:00');
+            });
+
+            await schedulesAPI.bulkCreate(apiSchedules);
+            setSaveSuccess(true);
+            alert("Monthly schedule saved to database successfully!");
+        } catch (error: any) {
+            console.error('Failed to save schedule:', error);
+            alert("Failed to save schedule to database.");
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleExportCSV = () => {
+        if (schedule.length === 0) return;
+
+        const staffNames = employees.map(e => e.name);
+        const headers = ['Date', ...staffNames, 'Coverage (A/P/N)'];
+
+        const rows = schedule.map(day => {
+            const staffAssignments = staffNames.map(name => {
+                const emp = employees.find(e => e.name === name);
+                if (!emp) return 'OFF';
+
+                if (day.assignments.AM.find(e => e.id === emp.id)) return 'AM';
+                if (day.assignments.PM.find(e => e.id === emp.id)) return 'PM';
+                if (day.assignments.NT.find(e => e.id === emp.id)) return 'NT';
+                return 'OFF';
+            });
+
+            const coverage = `${day.assignments.AM.length}/${day.assignments.PM.length}/${day.assignments.NT.length}`;
+            return [day.date, ...staffAssignments, coverage];
+        });
+
+        const csvContent = [
+            headers.join(','),
+            ...rows.map(row => row.join(','))
+        ].join('\n');
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement('a');
+        const url = URL.createObjectURL(blob);
+        link.setAttribute('href', url);
+        link.setAttribute('download', `rota_${selectedBranch}_${format(new Date(startDate), 'yyyy_MM')}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    };
+
+    const handleImportExcel = async (event: React.ChangeEvent<HTMLInputElement>) => {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        // Basic validation
+        if (!file.name.match(/\.(xlsx|xls)$/)) {
+            alert('Please upload an Excel file (.xlsx or .xls)');
+            return;
+        }
+
+        setLoadingExisting(true);
+        try {
+            const response = await schedulesAPI.importRota(file, selectedBranch);
+            const { message, stats } = response.data;
+            
+            alert(`${message}\n\nRunning Stats:\n✨ New Users Created: ${stats.newUsers}\n📅 Shifts Generated: ${stats.shiftsCreated}`);
+            
+            // Refresh view by reloading to ensure new users are fetched in AuthContext if needed
+            window.location.reload(); 
+
+        } catch (error: any) {
+            console.error('Import failed:', error);
+            const msg = error.response?.data?.error || 'Failed to populate rota from file.';
+            alert(`Import Error: ${msg}`);
+        } finally {
+            setLoadingExisting(false);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+        }
+    };
+
+    const getShiftColor = (type: string) => {
+        switch (type) {
+            case 'AM': return 'bg-white text-green-600 border-l-[0.5px] border-green-500 font-bold';
+            case 'PM': return 'bg-white text-red-600 border-l-[0.5px] border-red-500 font-bold';
+            case 'NT': return 'bg-white text-blue-600 border-l-[0.5px] border-blue-500 font-bold';
+            case 'OFF': return 'bg-gray-50 text-gray-400 border-gray-100 dark:bg-gray-800/20 dark:text-gray-500 dark:border-gray-800/50';
+            default: return 'bg-white text-gray-400 border-gray-100';
+        }
+    };
+
+    // ------------------------------------------------------------------
+    // Stats Calculations
+    // ------------------------------------------------------------------
+    const stats = useMemo(() => {
+        const staffStats = new Map<string, { AM: number, PM: number, NT: number, OFF: number, Total: number }>();
+
+        employees.forEach(emp => {
+            staffStats.set(emp.id, { AM: 0, PM: 0, NT: 0, OFF: 0, Total: 0 });
+        });
+
+        const dailyStats = schedule.map(day => ({
+            date: day.date,
+            AM: day.assignments.AM.length,
+            PM: day.assignments.PM.length,
+            NT: day.assignments.NT.length,
+            OFF: day.assignments.OFF.length
+        }));
+
+        schedule.forEach(day => {
+            day.assignments.AM.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id); if (s) { s.AM++; s.Total++; } });
+            day.assignments.PM.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id); if (s) { s.PM++; s.Total++; } });
+            day.assignments.NT.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id); if (s) { s.NT++; s.Total++; } });
+            day.assignments.OFF.forEach((e: RotaEmployee) => { const s = staffStats.get(e.id); if (s) { s.OFF++; } });
+        });
+
+        // Calculate variance (fairness)
+        const totalShifts = Array.from(staffStats.values()).map(s => s.Total);
+        const minShifts = Math.min(...totalShifts) || 0;
+        const maxShifts = Math.max(...totalShifts) || 0;
+        const varianceOK = (maxShifts - minShifts) <= 2;
+
+        return { staffStats, dailyStats, varianceOK, minShifts, maxShifts };
+    }, [schedule, employees]);
+
+    // ------------------------------------------------------------------
+    // Interaction
+    // ------------------------------------------------------------------
+    const handleCellClick = (dayIndex: number, employeeId: string) => {
+        const newSchedule = [...schedule];
+        const day = newSchedule[dayIndex];
+        const emp = employees.find(e => e.id === employeeId);
+        if (!emp) return;
+
+        // Current Shift?
+        let currentType: ShiftType = 'OFF';
+        if (day.assignments.AM.find(e => e.id === employeeId)) currentType = 'AM';
+        else if (day.assignments.PM.find(e => e.id === employeeId)) currentType = 'PM';
+        else if (day.assignments.NT.find(e => e.id === employeeId)) currentType = 'NT';
+
+        // Cycle: OFF -> AM -> PM -> NT -> OFF
+        const nextTypeMap: Record<string, ShiftType> = {
+            'OFF': 'AM',
+            'AM': 'PM',
+            'PM': 'NT',
+            'NT': 'OFF'
+        };
+        const nextType = nextTypeMap[currentType as string];
+
+        // Remove from current
+        if (currentType !== 'OFF') day.assignments[currentType as keyof typeof day.assignments] = (day.assignments[currentType as keyof typeof day.assignments] as RotaEmployee[]).filter(e => e.id !== employeeId);
+        else day.assignments.OFF = day.assignments.OFF.filter(e => e.id !== employeeId);
+
+        // Add to next
+        if (nextType !== 'OFF') (day.assignments[nextType as keyof typeof day.assignments] as RotaEmployee[]).push(emp);
+        else day.assignments.OFF.push(emp);
+
+        setSchedule(newSchedule);
+        setSaveSuccess(false);
+    };
+
+    return (
+        <div className="space-y-6 max-w-[1800px] mx-auto p-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                <div>
+                    <h1 className="text-2xl font-bold text-[rgb(var(--text-primary))]">Rota Generator</h1>
+                    <p className="text-[rgb(var(--text-secondary))]">Automated 5-2 cycle generation with fairness balancing</p>
+                </div>
+                <div className="flex gap-2">
+                    <input
+                        type="file"
+                        ref={fileInputRef}
+                        accept=".xlsx, .xls"
+                        onChange={handleImportExcel}
+                        className="hidden"
+                    />
                     <button
                         onClick={() => fileInputRef.current?.click()}
                         className="flex items-center gap-2 px-4 py-2 bg-[rgb(var(--bg-secondary))] border border-[rgb(var(--border-color))] text-[rgb(var(--text-primary))] rounded-lg hover:bg-[rgb(var(--bg-tertiary))] transition-colors"
                     >
                         <Upload size={18} />
-                        <span>Import CSV</span>
+                        <span>Import Excel</span>
                     </button>
                     <button
                         onClick={handleExportCSV}

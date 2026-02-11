@@ -73,6 +73,16 @@ export const schedulesAPI = {
     update: (id: number, scheduleData: any) => api.put(`/schedules/${id}`, scheduleData),
     delete: (id: number) => api.delete(`/schedules/${id}`),
     deleteRange: (data: { start_date: string, end_date: string, branch: string }) => api.delete('/schedules/range/bulk', { data }),
+    importRota: (file: File, branch: string) => {
+        const formData = new FormData();
+        formData.append('file', file);
+        formData.append('branch', branch);
+        return api.post('/schedules/import', formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data'
+            }
+        });
+    },
 };
 
 // Account Logs API
