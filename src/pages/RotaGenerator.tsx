@@ -221,11 +221,13 @@ export const RotaGenerator = () => {
         const file = event.target.files?.[0];
         if (!file) return;
 
+
         // Basic validation
-        if (!file.name.match(/\.(xlsx|xls)$/)) {
+        if (!file.name.match(/\.(xlsx|xls)$/i)) {
             alert('Please upload an Excel file (.xlsx or .xls)');
             return;
         }
+
 
         setLoadingExisting(true);
         try {
@@ -239,8 +241,8 @@ export const RotaGenerator = () => {
 
         } catch (error: any) {
             console.error('Import failed:', error);
-            const msg = error.response?.data?.error || 'Failed to populate rota from file.';
-            alert(`Import Error: ${msg}`);
+            const msg = error.response?.data?.error || error.message || 'Failed to populate rota from file.';
+            alert(`Import Error: ${typeof msg === 'object' ? JSON.stringify(msg) : msg}`);
         } finally {
             setLoadingExisting(false);
             if (fileInputRef.current) fileInputRef.current.value = '';
