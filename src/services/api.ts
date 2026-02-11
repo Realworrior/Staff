@@ -2,7 +2,12 @@ import axios from 'axios';
 
 const getApiUrl = () => {
     if (import.meta.env.DEV) return '/api';
-    return import.meta.env.VITE_API_URL || '/api';
+    const apiUrl = import.meta.env.VITE_API_URL;
+    // If we're on a real domain but VITE_API_URL points to localhost, ignore it
+    if (apiUrl && apiUrl.includes('localhost') && window.location.hostname !== 'localhost') {
+        return '/api';
+    }
+    return apiUrl || '/api';
 };
 
 const API_URL = getApiUrl();
