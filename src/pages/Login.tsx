@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { Lock, ChevronRight, UserCircle2, Eye, EyeOff } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { API_BASE_URL } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../context/ThemeContext';
 import logoDark from '../assets/logo-dark.png';
@@ -35,22 +34,10 @@ export const Login = () => {
                 setError(typeof errorMsg === 'string' ? errorMsg : 'Login failed. Please try again.');
             }
         } catch (err: any) {
-            console.error('Unexpected login error detail:', {
-                message: err.message,
-                status: err.response?.status,
-                data: err.response?.data,
-                url: err.config?.url
-            });
+            console.error('Login error:', err);
             const data = err?.response?.data;
-            const normalized =
-                (typeof data === 'string' && data.includes('<!DOCTYPE html>') ? 'Server returned HTML (likely 404). Check API path.' :
-                    typeof data === 'string' ? data : null) ||
-                (typeof data?.debug_message === 'string' && `Server Error: ${data.debug_message}`) ||
-                (typeof data?.error === 'string' && data.error) ||
-                (typeof data?.message === 'string' && data.message) ||
-                err?.message ||
-                'Login failed. Please try again.';
-            setError(normalized);
+            const msg = typeof data === 'string' ? data : (data?.error || data?.message || err?.message);
+            setError(msg || 'Login failed. Please try again.');
         }
     };
 
@@ -134,13 +121,8 @@ export const Login = () => {
                             <p className="font-semibold text-[rgb(var(--text-primary))]">Demo Credentials:</p>
                             <div className="grid grid-cols-2 gap-2">
                                 <div><span className="font-medium text-[rgb(var(--accent-primary))]">admin</span> / falmebet123</div>
-                                <div><span className="font-medium text-blue-500">supervisor</span> / falmebet123</div>
-                                <div><span className="font-medium text-[rgb(var(--accent-primary))]">staff</span> / falmebet123</div>
-                            </div>
-
-                            <div className="pt-2 mt-2 border-t border-[rgb(var(--border-color))]">
-                                <p className="font-semibold text-[10px] text-[rgb(var(--text-tertiary))]">API Target:</p>
-                                <code className="text-[10px] text-[rgb(var(--text-tertiary))] block break-all">{API_BASE_URL}</code>
+                                <div><span className="font-medium text-emerald-500">supervisor</span> / falmebet123</div>
+                                <div><span className="font-medium text-blue-500">staff</span> / falmebet123</div>
                             </div>
                         </div>
                     </form>

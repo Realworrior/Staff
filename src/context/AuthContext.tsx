@@ -98,50 +98,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             setSelectedBranch(userData.branch || 'betfalme');
             return null; // Success
         } catch (error: any) {
-            console.error('Login error detail:', {
-                status: error.response?.status,
-                data: error.response?.data,
-                message: error.message,
-                config_url: error.config?.url
-            });
-
-            if (error.code === 'ERR_NETWORK') {
-                return 'Network Error. Server unreachable.';
-            }
-
-            const status = error.response?.status;
+            console.error('Login error:', error);
             const data = error.response?.data;
-
-            // Always coerce API error payload into a human-readable string
-            const normalizeMessage = (): string => {
-                if (!data) return `Login failed (Status: ${status || 'unknown'}).`;
-
-                // If backend sent a top-level string
-                if (typeof data === 'string') {
-                    if (data.includes('<!DOCTYPE html>')) return 'Server returned HTML (likely crash).';
-                    return data;
-                }
-
-                // Common shapes: { error: 'msg' } or { message: 'msg' }
-                if (typeof data.error === 'string') return data.error;
-                if (typeof data.message === 'string') return data.message;
-
-                // Vercel specific error details
-                if (typeof data.details === 'string') return `Server Detail: ${data.details}`;
-
-                // Nested: { error: { code, message } }
-                if (data.error && typeof data.error.message === 'string') {
-                    return data.error.message;
-                }
-
-                return `Login failed. ${JSON.stringify(data).substring(0, 50)}`;
-            };
-
-            if (status === 401) {
-                return normalizeMessage() || 'Invalid credentials.';
-            }
-
-            return normalizeMessage();
+            const msg = typeof data === 'string' ? data : (data?.error || data?.message);
+            return msg || 'Login failed. Please try again.';
         }
     };
 
