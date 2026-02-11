@@ -166,13 +166,24 @@ router.post('/import', authMiddleware, requireRole('admin'), upload.single('file
             return res.status(400).json({ error: 'No file uploaded' });
         }
 
-        const workbook = xlsx.read(req.file.buffer, { type: 'buffer', cellDates: true });
+        let workbook;
+        try {
+            workbook = xlsx.read(req.file.buffer, { type: 'buffer', cellDates: true });
+        } catch (e) {
+            console.error('XLSX Parse Error:', e);
+            return res.status(400).json({ error: 'Failed to parse file. Please ensure it is a valid Excel or CSV file.' });
+        }
+
         const sheetName = workbook.SheetNames[0];
+        if (!sheetName) {
+            return res.status(400).json({ error: 'File contains no sheets or data.' });
+        }
+
         const sheet = workbook.Sheets[sheetName];
         const data = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: null });
 
-        if (data.length < 2) {
-            return res.status(400).json({ error: 'Excel file is empty or invalid format' });
+        if (!data || data.length < 2) {
+            return res.status(400).json({ error: 'File is empty or invalid format (headers + at least one row required)' });
         }
 
         // Row 1: Headers (Date, Name1, Name2, ...)

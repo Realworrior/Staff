@@ -223,8 +223,8 @@ export const RotaGenerator = () => {
 
 
         // Basic validation
-        if (!file.name.match(/\.(xlsx|xls)$/i)) {
-            alert('Please upload an Excel file (.xlsx or .xls)');
+        if (!file.name.match(/\.(xlsx|xls|csv)$/i)) {
+            alert('Please upload an Excel or CSV file (.xlsx, .xls, .csv)');
             return;
         }
 
@@ -340,7 +340,7 @@ export const RotaGenerator = () => {
                     <input
                         type="file"
                         ref={fileInputRef}
-                        accept=".xlsx, .xls"
+                        accept=".xlsx, .xls, .csv"
                         onChange={handleImportExcel}
                         className="hidden"
                     />
