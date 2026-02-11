@@ -1,14 +1,21 @@
-import server from '../server/src/server.js';
+const server = require('../server/src/server.js');
 const { app } = server;
-import database from '../server/src/config/database.js';
+const database = require('../server/src/config/database.js');
 const { connectPromise } = database;
 
-export default async (req, res) => {
+module.exports = async (req, res) => {
+    // Debug logging
+    console.log(`[Vercel] Incoming request: ${req.method} ${req.url}`);
+
     try {
         await connectPromise;
+        console.log('[Vercel] Database connected');
     } catch (e) {
-        console.error('Database connection failed in Vercel function:', e);
-        // Continue to app to let it handle error or fail gracefully
+        console.error('[Vercel] Database connection failed:', e);
+        return res.status(500).json({
+            error: 'Database connection failed',
+            details: e.message
+        });
     }
 
     app(req, res);

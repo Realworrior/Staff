@@ -27,7 +27,12 @@ const handleError = (res, error, context = 'Operation') => {
     }
 
     // Default to Internal Server Error
-    res.status(500).json({ error: `Internal server error during ${context.toLowerCase()}.` });
+    console.error(`❌ ${context} Error Details:`, error);
+    res.status(500).json({
+        error: `Internal server error during ${context.toLowerCase()}.`,
+        debug_message: error.message,
+        debug_stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
 };
 
 module.exports = { handleError };
