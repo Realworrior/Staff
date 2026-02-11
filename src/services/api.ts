@@ -1,12 +1,17 @@
 import axios from 'axios';
 
 const getApiUrl = () => {
-    if (import.meta.env.DEV) return '/api';
+    // In production, we almost always want a relative path /api
+    // because Vercel/proxies handle routing.
+    if (!import.meta.env.DEV && window.location.hostname !== 'localhost') {
+        return '/api';
+    }
+
     const apiUrl = import.meta.env.VITE_API_URL;
-    // If we're on a real domain but VITE_API_URL points to localhost, ignore it
     if (apiUrl && apiUrl.includes('localhost') && window.location.hostname !== 'localhost') {
         return '/api';
     }
+
     return apiUrl || '/api';
 };
 

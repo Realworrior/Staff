@@ -35,10 +35,16 @@ export const Login = () => {
                 setError(typeof errorMsg === 'string' ? errorMsg : 'Login failed. Please try again.');
             }
         } catch (err: any) {
-            console.error('Unexpected login error:', err);
+            console.error('Unexpected login error detail:', {
+                message: err.message,
+                status: err.response?.status,
+                data: err.response?.data,
+                url: err.config?.url
+            });
             const data = err?.response?.data;
             const normalized =
-                (typeof data === 'string' && data) ||
+                (typeof data === 'string' && data.includes('<!DOCTYPE html>') ? 'Server returned HTML (likely 404). Check API path.' :
+                    typeof data === 'string' ? data : null) ||
                 (typeof data?.debug_message === 'string' && `Server Error: ${data.debug_message}`) ||
                 (typeof data?.error === 'string' && data.error) ||
                 (typeof data?.message === 'string' && data.message) ||
