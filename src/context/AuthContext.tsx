@@ -114,21 +114,27 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
             // Always coerce API error payload into a human-readable string
             const normalizeMessage = (): string => {
-                if (!data) return 'Login failed. Please try again.';
+                if (!data) return `Login failed (Status: ${status || 'unknown'}).`;
 
                 // If backend sent a top-level string
-                if (typeof data === 'string') return data;
+                if (typeof data === 'string') {
+                    if (data.includes('<!DOCTYPE html>')) return 'Server returned HTML (likely crash).';
+                    return data;
+                }
 
                 // Common shapes: { error: 'msg' } or { message: 'msg' }
                 if (typeof data.error === 'string') return data.error;
                 if (typeof data.message === 'string') return data.message;
+
+                // Vercel specific error details
+                if (typeof data.details === 'string') return `Server Detail: ${data.details}`;
 
                 // Nested: { error: { code, message } }
                 if (data.error && typeof data.error.message === 'string') {
                     return data.error.message;
                 }
 
-                return 'Login failed. Please try again.';
+                return `Login failed. ${JSON.stringify(data).substring(0, 50)}`;
             };
 
             if (status === 401) {
