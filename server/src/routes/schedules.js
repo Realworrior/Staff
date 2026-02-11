@@ -154,7 +154,7 @@ router.delete('/range/bulk', authMiddleware, requireRole('admin'), async (req, r
 const multer = require('multer');
 const xlsx = require('xlsx');
 const User = require('../models/User');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 // Configure Multer for memory storage
 const upload = multer({ storage: multer.memoryStorage() });

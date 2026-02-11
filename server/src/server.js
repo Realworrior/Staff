@@ -6,7 +6,7 @@ const path = require('path');
 // Initialize database
 const { mongoose, connectPromise } = require('./config/database');
 const User = require('./models/User');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 // Run automated initialization for MongoDB
 const { seedStaff } = require('./utils/userSeed');

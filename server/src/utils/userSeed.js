@@ -1,5 +1,5 @@
 const User = require('../models/User');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 const SEED_USERS = [
     { username: 'nickson', name: 'Nickson', role: 'staff', branch: 'betfalme' },
