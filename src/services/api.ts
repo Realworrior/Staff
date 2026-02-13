@@ -1,8 +1,21 @@
 import axios from 'axios';
 
 const getApiUrl = () => {
-    if (import.meta.env.DEV) return '/api';
-    return import.meta.env.VITE_API_URL || '/api';
+    let url = import.meta.env.DEV ? '/api' : (import.meta.env.VITE_API_URL || '/api');
+
+    // Ensure the URL correctly includes the /api prefix
+    if (!url.includes('/api')) {
+        url = url.endsWith('/') ? `${url}api` : `${url}/api`;
+    }
+
+    // Always end with a trailing slash to work reliably with non-slashed relative paths
+    const finalUrl = url.endsWith('/') ? url : `${url}/`;
+
+    if (!import.meta.env.DEV) {
+        console.log('[API] Initialized with Base URL:', finalUrl);
+    }
+
+    return finalUrl;
 };
 
 const API_URL = getApiUrl();
