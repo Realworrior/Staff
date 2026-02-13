@@ -100,7 +100,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         } catch (error: any) {
             console.error('Login error:', error);
             const data = error.response?.data;
-            const msg = typeof data === 'string' ? data : (data?.error || data?.message);
+            const status = error.response?.status;
+
+            // Extract the most descriptive error message possible
+            let msg = typeof data === 'string' ? data : (data?.error || data?.message);
+
+            if (!msg) {
+                if (status === 503) msg = 'Database is currently unavailable. Please try again in a moment.';
+                else if (status === 500) msg = 'Internal server error. Our team has been notified.';
+                else if (error.message) msg = `Connection error: ${error.message}`;
+            }
+
             return msg || 'Login failed. Please try again.';
         }
     };
