@@ -7,7 +7,18 @@ let sequelize;
 
 // Database connection logic
 // Priority: 1. DATABASE_URL/POSTGRES_URL (Postgres) -> 2. Supabase Config (Auto-construct) -> 3. SQLite
-let dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+const dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+
+// Debugging: Log which key environment variables are present on Vercel
+if (process.env.VERCEL) {
+  console.log('[Vercel] Env Check:', {
+    hasSupabaseUrl: !!process.env.SUPABASE_URL,
+    hasSupabaseKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+    hasDbPassword: !!process.env.SUPABASE_DB_PASSWORD,
+    hasJwtSecret: !!process.env.JWT_SECRET,
+    nodeEnv: process.env.NODE_ENV
+  });
+}
 
 // Auto-construct Supabase URL if components are present but full URL is not
 // We check for process.env.VERCEL to know we are in production
