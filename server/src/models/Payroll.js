@@ -1,15 +1,45 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
 
-const payrollSchema = new mongoose.Schema({
-    user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    start_date: { type: Date, required: true },
-    end_date: { type: Date, required: true },
-    total_transport: { type: Number, required: true },
-    status: { type: String, enum: ['pending', 'paid'], default: 'pending' },
-    paid_at: { type: Date },
-    created_at: { type: Date, default: Date.now }
+const Payroll = sequelize.define('Payroll', {
+    id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true
+    },
+    user_id: {
+        type: DataTypes.UUID,
+        allowNull: false,
+        references: {
+            model: 'Users',
+            key: 'id'
+        }
+    },
+    start_date: {
+        type: DataTypes.DATEONLY,
+        allowNull: false
+    },
+    end_date: {
+        type: DataTypes.DATEONLY,
+        allowNull: false
+    },
+    total_transport: {
+        type: DataTypes.FLOAT,
+        allowNull: false
+    },
+    status: {
+        type: DataTypes.ENUM('pending', 'paid'),
+        defaultValue: 'pending'
+    },
+    paid_at: {
+        type: DataTypes.DATE,
+        allowNull: true
+    }
+}, {
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: false,
+    underscored: true
 });
-
-const Payroll = mongoose.model('Payroll', payrollSchema);
 
 module.exports = Payroll;

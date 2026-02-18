@@ -1,5 +1,6 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
+const { Op } = require('sequelize');
 
 const SEED_USERS = [
     { username: 'nickson', name: 'Nickson', role: 'staff', branch: 'betfalme' },
@@ -17,14 +18,18 @@ const SEED_USERS = [
 const seedStaff = async () => {
     try {
         console.log('🌱 Checking staff population...');
-        const userCount = await User.countDocuments({ role: { $ne: 'admin' } });
+        const userCount = await User.count({
+            where: {
+                role: { [Op.ne]: 'admin' }
+            }
+        });
 
         if (userCount < 9) {
             console.log(`🚀 Only ${userCount} staff found. Seeding default staff members...`);
             const hash = bcrypt.hashSync('falmebet123', 10);
 
             for (const userData of SEED_USERS) {
-                const exists = await User.findOne({ username: userData.username });
+                const exists = await User.findOne({ where: { username: userData.username } });
                 if (!exists) {
                     await User.create({
                         ...userData,

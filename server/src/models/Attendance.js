@@ -1,18 +1,57 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
 
-const attendanceSchema = new mongoose.Schema({
-    user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    date: { type: Date, required: true },
-    clock_in: { type: Date, required: true },
-    clock_out: { type: Date },
-    location: { type: String },
-    latitude: { type: Number },
-    longitude: { type: Number },
-    status: { type: String, default: 'present' },
-    notes: { type: String },
-    created_at: { type: Date, default: Date.now }
+const Attendance = sequelize.define('Attendance', {
+    id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true
+    },
+    user_id: {
+        type: DataTypes.UUID,
+        allowNull: false,
+        references: {
+            model: 'Users',
+            key: 'id'
+        }
+    },
+    date: {
+        type: DataTypes.DATEONLY,
+        allowNull: false
+    },
+    clock_in: {
+        type: DataTypes.DATE,
+        allowNull: false
+    },
+    clock_out: {
+        type: DataTypes.DATE,
+        allowNull: true
+    },
+    location: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
+    latitude: {
+        type: DataTypes.FLOAT,
+        allowNull: true
+    },
+    longitude: {
+        type: DataTypes.FLOAT,
+        allowNull: true
+    },
+    status: {
+        type: DataTypes.STRING,
+        defaultValue: 'present'
+    },
+    notes: {
+        type: DataTypes.TEXT,
+        allowNull: true
+    }
+}, {
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: false,
+    underscored: true
 });
-
-const Attendance = mongoose.model('Attendance', attendanceSchema);
 
 module.exports = Attendance;

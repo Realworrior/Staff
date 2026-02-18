@@ -3,6 +3,7 @@ const Attendance = require('../models/Attendance');
 const User = require('../models/User');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 const { handleError } = require('../utils/errors');
+const { Op } = require('sequelize');
 
 const router = express.Router();
 
@@ -11,13 +12,15 @@ router.post('/clock-in', authMiddleware, requireRole('staff', 'supervisor'), asy
     try {
         const { location, latitude, longitude } = req.body;
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const todayStr = now.toISOString().split('T')[0];
 
         // Check if already clocked in today (where clock_out is null)
         const existing = await Attendance.findOne({
-            user_id: req.user.id,
-            date: { $gte: today },
-            clock_out: { $exists: false }
+            where: {
+                user_id: req.user.id,
+                date: todayStr,
+                clock_out: null
+            }
         });
 
         if (existing) {
@@ -26,14 +29,14 @@ router.post('/clock-in', authMiddleware, requireRole('staff', 'supervisor'), asy
 
         const attendance = await Attendance.create({
             user_id: req.user.id,
-            date: today,
+            date: todayStr,
             clock_in: now,
             location,
             latitude,
             longitude
         });
 
-        res.status(201).json({ ...attendance.toObject(), id: attendance._id });
+        res.status(201).json(attendance);
     } catch (error) {
         handleError(res, error, 'Clock in');
     }
@@ -43,22 +46,23 @@ router.post('/clock-in', authMiddleware, requireRole('staff', 'supervisor'), asy
 router.post('/clock-out', authMiddleware, requireRole('staff', 'supervisor'), async (req, res) => {
     try {
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const todayStr = now.toISOString().split('T')[0];
 
         const attendance = await Attendance.findOne({
-            user_id: req.user.id,
-            date: { $gte: today },
-            clock_out: { $exists: false }
+            where: {
+                user_id: req.user.id,
+                date: todayStr,
+                clock_out: null
+            }
         });
 
         if (!attendance) {
             return res.status(400).json({ error: 'Not clocked in' });
         }
 
-        attendance.clock_out = now;
-        await attendance.save();
+        await attendance.update({ clock_out: now });
 
-        res.json({ ...attendance.toObject(), id: attendance._id });
+        res.json(attendance);
     } catch (error) {
         handleError(res, error, 'Clock out');
     }
@@ -67,12 +71,13 @@ router.post('/clock-out', authMiddleware, requireRole('staff', 'supervisor'), as
 // Get my attendance records
 router.get('/my-records', authMiddleware, async (req, res) => {
     try {
-        const records = await Attendance.find({ user_id: req.user.id })
-            .sort({ date: -1, clock_in: -1 })
-            .limit(50);
+        const records = await Attendance.findAll({
+            where: { user_id: req.user.id },
+            order: [['date', 'DESC'], ['clock_in', 'DESC']],
+            limit: 50
+        });
 
-        const mappedRecords = records.map(r => ({ ...r.toObject(), id: r._id }));
-        res.json(mappedRecords);
+        res.json(records);
     } catch (error) {
         handleError(res, error, 'Get my records');
     }
@@ -82,29 +87,38 @@ router.get('/my-records', authMiddleware, async (req, res) => {
 router.get('/all', authMiddleware, requireRole('admin'), async (req, res) => {
     try {
         const { startDate, endDate, userId, branch } = req.query;
-        let query = {};
+        let where = {};
 
-        if (userId) query.user_id = userId;
+        if (userId) where.user_id = userId;
         if (startDate || endDate) {
-            query.date = {};
-            if (startDate) query.date.$gte = new Date(startDate);
-            if (endDate) query.date.$lte = new Date(endDate);
+            where.date = {};
+            if (startDate) where.date[Op.gte] = startDate;
+            if (endDate) where.date[Op.lte] = endDate;
         }
 
-        let history = await Attendance.find(query)
-            .populate('user_id', 'name role branch')
-            .sort({ date: -1, clock_in: -1 });
+        let include = [{
+            model: User,
+            attributes: ['name', 'role', 'branch']
+        }];
 
         if (branch) {
-            history = history.filter(h => h.user_id && h.user_id.branch === branch);
+            include[0].where = { branch };
         }
 
-        const mappedHistory = history.map(h => ({
-            ...h.toObject(),
-            id: h._id,
-            user_name: h.user_id ? h.user_id.name : 'Unknown',
-            user_role: h.user_id ? h.user_id.role : 'Unknown'
-        }));
+        const history = await Attendance.findAll({
+            where,
+            include,
+            order: [['date', 'DESC'], ['clock_in', 'DESC']]
+        });
+
+        const mappedHistory = history.map(h => {
+            const plain = h.get({ plain: true });
+            return {
+                ...plain,
+                user_name: plain.User ? plain.User.name : 'Unknown',
+                user_role: plain.User ? plain.User.role : 'Unknown'
+            };
+        });
 
         res.json(mappedHistory);
     } catch (error) {
@@ -117,28 +131,35 @@ router.get('/summary', authMiddleware, requireRole('admin'), async (req, res) =>
     try {
         const { branch } = req.query;
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const thirtyDaysAgo = new Date(today);
+        const todayStr = now.toISOString().split('T')[0];
+        const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+        const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().split('T')[0];
 
         // 1. Total staff
-        const staffFilter = { role: { $in: ['staff', 'supervisor'] } };
-        if (branch) staffFilter.branch = branch;
-        const totalStaffCount = await User.countDocuments(staffFilter);
+        const staffWhere = { role: { [Op.in]: ['staff', 'supervisor'] } };
+        if (branch) staffWhere.branch = branch;
+        const totalStaffCount = await User.count({ where: staffWhere });
 
         // 2. Present today
-        let presentQuery = Attendance.find({ date: { $gte: today } }).populate('user_id');
-        let presentRecords = await presentQuery;
-        if (branch) {
-            presentRecords = presentRecords.filter(r => r.user_id && r.user_id.branch === branch);
-        }
-        const presentTodayCount = presentRecords.length;
+        const presentInclude = [{
+            model: User,
+            attributes: ['branch']
+        }];
+        if (branch) presentInclude[0].where = { branch };
+
+        const presentTodayCount = await Attendance.count({
+            where: { date: todayStr },
+            include: presentInclude
+        });
 
         // 3. Last 30 days data
-        let thirtyDaysRecords = await Attendance.find({ date: { $gte: thirtyDaysAgo } }).populate('user_id');
-        if (branch) {
-            thirtyDaysRecords = thirtyDaysRecords.filter(r => r.user_id && r.user_id.branch === branch);
-        }
+        const thirtyDaysRecords = await Attendance.findAll({
+            where: {
+                date: { [Op.gte]: thirtyDaysAgoStr }
+            },
+            include: presentInclude
+        });
 
         let totalHours = 0;
         let recordsWithHours = 0;

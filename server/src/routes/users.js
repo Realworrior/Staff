@@ -3,28 +3,23 @@ const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 const { handleError } = require('../utils/errors');
+const { Op } = require('sequelize');
 
 const router = express.Router();
 
 // Get all users (Admin and Supervisor see all, Staff see limited)
 router.get('/', authMiddleware, async (req, res) => {
     try {
-        let projection = '';
+        let attributes;
         if (req.user.role === 'admin' || req.user.role === 'supervisor') {
-            projection = 'username name email role branch avatar transport_allowance created_at';
+            attributes = ['id', 'username', 'name', 'email', 'role', 'branch', 'avatar', 'transport_allowance', 'created_at'];
         } else {
             // Staff only see basic info for contact/chat
-            projection = 'username name role branch avatar';
+            attributes = ['id', 'username', 'name', 'role', 'branch', 'avatar'];
         }
 
-        const users = await User.find({}).select(projection);
-
-        const mappedUsers = users.map(u => ({
-            ...u.toObject(),
-            id: u._id
-        }));
-
-        res.json(mappedUsers);
+        const users = await User.findAll({ attributes });
+        res.json(users);
     } catch (error) {
         handleError(res, error, 'Get users');
     }
@@ -57,8 +52,9 @@ router.post('/', authMiddleware, requireRole('admin'), async (req, res) => {
             branch: branch || 'betfalme'
         });
 
-        const { password_hash, ...userWithoutPassword } = newUser.toObject();
-        res.status(201).json({ ...userWithoutPassword, id: newUser._id });
+        const userData = newUser.get({ plain: true });
+        delete userData.password_hash;
+        res.status(201).json(userData);
     } catch (error) {
         handleError(res, error, 'Create user');
     }
@@ -70,7 +66,7 @@ router.put('/:id', authMiddleware, async (req, res) => {
         const { id } = req.params;
         const { name, email, role, transport_allowance, branch } = req.body;
 
-        const user = await User.findById(id);
+        const user = await User.findByPk(id);
 
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
@@ -91,9 +87,13 @@ router.put('/:id', authMiddleware, async (req, res) => {
         if (transport_allowance !== undefined) updateData.transport_allowance = transport_allowance;
         if (branch !== undefined) updateData.branch = branch;
 
-        const updatedUser = await User.findByIdAndUpdate(id, updateData, { new: true }).select('-password_hash');
+        await user.update(updateData);
 
-        res.json({ ...updatedUser.toObject(), id: updatedUser._id });
+        const updatedUser = await User.findByPk(id, {
+            attributes: { exclude: ['password_hash'] }
+        });
+
+        res.json(updatedUser);
     } catch (error) {
         handleError(res, error, 'Update user');
     }
@@ -105,41 +105,38 @@ router.delete('/:id', authMiddleware, requireRole('admin'), async (req, res) => 
         const { id } = req.params;
 
         // Prevent deleting yourself
-        if (id === req.user.id.toString()) {
+        if (id === req.user.id) {
             return res.status(400).json({ error: 'Cannot delete your own account' });
         }
 
-        const user = await User.findById(id);
+        const user = await User.findByPk(id);
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
 
         // Cascade delete related data
-        // 1. Schedules
         const Schedule = require('../models/Schedule');
-        await Schedule.deleteMany({ user_id: id });
-
-        // 2. Attendance
         const Attendance = require('../models/Attendance');
-        await Attendance.deleteMany({ user_id: id });
-
-        // 3. Payroll
         const Payroll = require('../models/Payroll');
-        await Payroll.deleteMany({ user_id: id });
-
-        // 4. Chat Messages
         const ChatMessage = require('../models/ChatMessage');
-        await ChatMessage.deleteMany({ user_id: id });
-
-        // 5. Remove from Chat Channels
         const ChatChannel = require('../models/ChatChannel');
-        await ChatChannel.updateMany(
-            { members: id },
-            { $pull: { members: id } }
-        );
+
+        await Schedule.destroy({ where: { user_id: id } });
+        await Attendance.destroy({ where: { user_id: id } });
+        await Payroll.destroy({ where: { user_id: id } });
+        await ChatMessage.destroy({ where: { user_id: id } });
+
+        // Remove from Chat Channels (members is stored as string/JSON)
+        const channels = await ChatChannel.findAll();
+        for (const channel of channels) {
+            if (channel.members && channel.members.includes(id)) {
+                const newMembers = channel.members.filter(mId => mId !== id);
+                await channel.update({ members: newMembers });
+            }
+        }
 
         // Finally, delete the user
-        await User.findByIdAndDelete(id);
+        await user.destroy();
 
         res.json({ message: 'User and all related data deleted successfully' });
     } catch (error) {

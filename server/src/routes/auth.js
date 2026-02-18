@@ -12,7 +12,11 @@ router.post('/login', async (req, res) => {
     try {
         const { username, password } = req.body;
 
-        const user = await User.findOne({ username: username.toLowerCase() });
+        if (!username || !password) {
+            return res.status(400).json({ error: 'Username and password are required' });
+        }
+
+        const user = await User.findOne({ where: { username: username.toLowerCase() } });
 
         if (!user) {
             return res.status(401).json({ error: 'Invalid credentials' });
@@ -25,17 +29,18 @@ router.post('/login', async (req, res) => {
         }
 
         const token = jwt.sign(
-            { id: user._id, username: user.username, role: user.role },
+            { id: user.id, username: user.username, role: user.role },
             process.env.JWT_SECRET,
             { expiresIn: process.env.JWT_EXPIRES_IN }
         );
 
-        // Remove password from response
-        const { password_hash, ...userWithoutPassword } = user.toObject();
+        // Convert to plain object and remove password
+        const userData = user.get({ plain: true });
+        delete userData.password_hash;
 
         res.json({
             token,
-            user: { ...userWithoutPassword, id: user._id }
+            user: userData
         });
     } catch (error) {
         handleError(res, error, 'Login');
@@ -45,13 +50,15 @@ router.post('/login', async (req, res) => {
 // Get current user
 router.get('/me', authMiddleware, async (req, res) => {
     try {
-        const user = await User.findById(req.user.id).select('-password_hash');
+        const user = await User.findByPk(req.user.id, {
+            attributes: { exclude: ['password_hash'] }
+        });
 
         if (!user) {
             return res.status(404).json({ error: 'User not found' });
         }
 
-        res.json({ ...user.toObject(), id: user._id });
+        res.json(user);
     } catch (error) {
         handleError(res, error, 'Get current user');
     }

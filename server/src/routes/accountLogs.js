@@ -8,20 +8,25 @@ const { handleError } = require('../utils/errors');
 router.get('/', authMiddleware, requireRole('admin', 'supervisor'), async (req, res) => {
     try {
         const { branch } = req.query;
-        let query = {};
+        let where = {};
 
         if (branch) {
-            query.branch = branch;
+            where.branch = branch;
         }
 
-        const logs = await AccountLog.find(query).sort({ last_request_at: -1 });
+        const logs = await AccountLog.findAll({
+            where,
+            order: [['last_request_at', 'DESC']]
+        });
 
         // Add priority logic in JS
-        const processedLogs = logs.map(log => ({
-            ...log.toObject(),
-            id: log._id,
-            priority: log.request_count > 10 ? 'high' : log.request_count > 5 ? 'medium' : 'low'
-        }));
+        const processedLogs = logs.map(log => {
+            const plain = log.get({ plain: true });
+            return {
+                ...plain,
+                priority: plain.request_count > 10 ? 'high' : plain.request_count > 5 ? 'medium' : 'low'
+            };
+        });
 
         res.json({ data: processedLogs });
     } catch (error) {
@@ -39,7 +44,7 @@ router.post('/', authMiddleware, requireRole('admin', 'supervisor'), async (req,
 
     try {
         // Check for existing log for this number + branch
-        let existing = await AccountLog.findOne({ phone_number, branch });
+        let existing = await AccountLog.findOne({ where: { phone_number, branch } });
 
         if (existing) {
             const lastRequest = new Date(existing.last_request_at);
@@ -53,15 +58,16 @@ router.post('/', authMiddleware, requireRole('admin', 'supervisor'), async (req,
             }
 
             // Update existing log
-            existing.request_count += 1;
-            existing.last_request_at = now;
-            await existing.save();
+            await existing.update({
+                request_count: existing.request_count + 1,
+                last_request_at: now
+            });
 
-            return res.json({ message: 'Log updated successfully', id: existing._id });
+            return res.json({ message: 'Log updated successfully', id: existing.id });
         } else {
             // Insert new log
             const inserted = await AccountLog.create({ phone_number, branch });
-            return res.status(201).json({ message: 'Log created successfully', id: inserted._id });
+            return res.status(201).json({ message: 'Log created successfully', id: inserted.id });
         }
     } catch (error) {
         handleError(res, error, 'Process account log');
@@ -78,11 +84,13 @@ router.patch('/:id', authMiddleware, requireRole('admin', 'supervisor'), async (
     }
 
     try {
-        const updated = await AccountLog.findByIdAndUpdate(id, { status }, { new: true });
+        const log = await AccountLog.findByPk(id);
 
-        if (!updated) {
+        if (!log) {
             return res.status(404).json({ error: 'Log not found' });
         }
+
+        await log.update({ status });
 
         res.json({ message: 'Status updated successfully' });
     } catch (error) {

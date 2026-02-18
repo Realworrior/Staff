@@ -1,12 +1,13 @@
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
-const { mongoose, supabase } = require('../config/database');
+const { supabase } = require('../config/database');
 const ChatChannel = require('../models/ChatChannel');
 const ChatMessage = require('../models/ChatMessage');
 const User = require('../models/User');
 const { authMiddleware } = require('../middleware/auth');
 const { handleError } = require('../utils/errors');
+const { Op } = require('sequelize');
 
 const router = express.Router();
 
@@ -17,15 +18,23 @@ const upload = multer({ storage });
 // GET /channels
 router.get('/channels', authMiddleware, async (req, res) => {
     try {
-        const channels = await ChatChannel.find({
-            $or: [
-                { type: 'public' },
-                { members: req.user.id }
-            ]
-        }).sort({ type: -1, name: 1 });
+        const userId = req.user.id;
+        const channels = await ChatChannel.findAll({
+            where: {
+                [Op.or]: [
+                    { type: 'public' },
+                    { members: { [Op.like]: `%${userId}%` } } // Basic search for member in JSON string
+                ]
+            },
+            order: [['type', 'DESC'], ['name', 'ASC']]
+        });
 
-        const mappedChannels = channels.map(c => ({ ...c.toObject(), id: c._id }));
-        res.json(mappedChannels);
+        // Filter more accurately in JS if needed, but for SQLite simple LIKE on JSON string often works for IDs
+        const filtered = channels.filter(c =>
+            c.type === 'public' || (c.members && c.members.includes(userId))
+        );
+
+        res.json(filtered);
     } catch (error) {
         handleError(res, error, 'Fetch channels');
     }
@@ -47,7 +56,7 @@ router.post('/channels', authMiddleware, async (req, res) => {
             members: [req.user.id] // Auto-join creator
         });
 
-        res.status(201).json({ ...channel.toObject(), id: channel._id });
+        res.status(201).json(channel);
     } catch (error) {
         handleError(res, error, 'Create channel');
     }
@@ -56,24 +65,38 @@ router.post('/channels', authMiddleware, async (req, res) => {
 // GET /direct-messages
 router.get('/direct-messages', authMiddleware, async (req, res) => {
     try {
-        const dms = await ChatChannel.find({
-            type: 'dm',
-            members: req.user.id
-        }).populate('members', 'id name avatar');
+        const userId = req.user.id;
+        const dms = await ChatChannel.findAll({
+            where: {
+                type: 'dm',
+                members: { [Op.like]: `%${userId}%` }
+            },
+            include: [{
+                model: User,
+                as: 'MemberDetails', // We'll need to define this association carefully
+                attributes: ['id', 'name', 'avatar']
+            }]
+        });
 
-        const results = dms.map(dm => {
-            const other = dm.members.find(m => m._id.toString() !== req.user.id.toString());
+        // Since we didn't define formal associations for 'members' array in Sequelize yet,
+        // we'll fetch details manually or update models. Let's do manual for now to be safe.
+        const results = await Promise.all(dms.map(async (dm) => {
+            if (!dm.members.includes(userId)) return null;
+
+            const otherId = dm.members.find(id => id !== userId);
+            const other = await User.findByPk(otherId, { attributes: ['id', 'name', 'avatar'] });
+
             if (!other) return null;
+
             return {
-                ...dm.toObject(),
-                id: dm._id,
+                ...dm.get({ plain: true }),
                 target_user_name: other.name,
                 target_user_avatar: other.avatar,
-                target_user_id: other._id
+                target_user_id: other.id
             };
-        }).filter(Boolean);
+        }));
 
-        res.json(results);
+        res.json(results.filter(Boolean));
     } catch (error) {
         handleError(res, error, 'Fetch DMs');
     }
@@ -88,7 +111,7 @@ router.post('/dm', authMiddleware, async (req, res) => {
         const ids = [req.user.id, targetUserId].sort();
         const dmName = `dm_${ids[0]}_${ids[1]}`;
 
-        let channel = await ChatChannel.findOne({ name: dmName, type: 'dm' });
+        let channel = await ChatChannel.findOne({ where: { name: dmName, type: 'dm' } });
 
         if (!channel) {
             channel = await ChatChannel.create({
@@ -99,7 +122,7 @@ router.post('/dm', authMiddleware, async (req, res) => {
             });
         }
 
-        res.json({ ...channel.toObject(), id: channel._id });
+        res.json(channel);
     } catch (error) {
         handleError(res, error, 'DM creation');
     }
@@ -110,26 +133,33 @@ router.get('/channels/:id/messages', authMiddleware, async (req, res) => {
     try {
         const { id } = req.params;
 
-        const channel = await ChatChannel.findById(id);
+        const channel = await ChatChannel.findByPk(id);
         if (!channel) return res.status(404).json({ error: 'Channel not found' });
 
-        const isMember = channel.members.some(m => m.toString() === req.user.id);
+        const isMember = channel.members && channel.members.includes(req.user.id);
         if (channel.type !== 'public' && !isMember) {
             return res.status(403).json({ error: 'Access denied' });
         }
 
-        const messages = await ChatMessage.find({ channel_id: id })
-            .populate('user_id', 'name avatar')
-            .sort({ created_at: 1 })
-            .limit(100);
+        const messages = await ChatMessage.findAll({
+            where: { channel_id: id },
+            include: [{
+                model: User,
+                attributes: ['name', 'avatar']
+            }],
+            order: [['created_at', 'ASC']],
+            limit: 100
+        });
 
-        const processedMessages = messages.map(m => ({
-            ...m.toObject(),
-            id: m._id,
-            user_name: m.user_id ? m.user_id.name : 'Unknown',
-            user_avatar: m.user_id ? m.user_id.avatar : null,
-            reactions: m.reactions || []
-        }));
+        const processedMessages = messages.map(m => {
+            const plain = m.get({ plain: true });
+            return {
+                ...plain,
+                user_name: plain.User ? plain.User.name : 'Unknown',
+                user_avatar: plain.User ? plain.User.avatar : null,
+                reactions: plain.reactions || []
+            };
+        });
 
         res.json(processedMessages);
     } catch (error) {
@@ -155,13 +185,18 @@ router.post('/messages', authMiddleware, async (req, res) => {
             file_type: file_type || null
         });
 
-        const populated = await ChatMessage.findById(message._id).populate('user_id', 'name avatar');
+        const populated = await ChatMessage.findByPk(message.id, {
+            include: [{
+                model: User,
+                attributes: ['name', 'avatar']
+            }]
+        });
 
+        const plain = populated.get({ plain: true });
         res.status(201).json({
-            ...populated.toObject(),
-            id: populated._id,
-            user_name: populated.user_id.name,
-            user_avatar: populated.user_id.avatar,
+            ...plain,
+            user_name: plain.User.name,
+            user_avatar: plain.User.avatar,
             reactions: []
         });
     } catch (error) {
@@ -213,22 +248,26 @@ router.post('/upload', authMiddleware, upload.single('file'), async (req, res) =
 router.post('/reactions', authMiddleware, async (req, res) => {
     try {
         const { messageId, emoji } = req.body;
+        const userId = req.user.id;
 
-        const message = await ChatMessage.findById(messageId);
+        const message = await ChatMessage.findByPk(messageId);
         if (!message) return res.status(404).json({ error: 'Message not found' });
 
-        const existingIndex = message.reactions.findIndex(
-            r => r.user_id.toString() === req.user.id.toString() && r.emoji === emoji
+        let currentReactions = message.reactions || [];
+        const existingIndex = currentReactions.findIndex(
+            r => r.user_id === userId && r.emoji === emoji
         );
 
         if (existingIndex > -1) {
-            message.reactions.splice(existingIndex, 1);
-            await message.save();
-            res.json({ action: 'removed', emoji, messageId, userId: req.user.id });
+            // Remove reaction
+            currentReactions = currentReactions.filter((_, i) => i !== existingIndex);
+            await message.update({ reactions: currentReactions });
+            res.json({ action: 'removed', emoji, messageId, userId });
         } else {
-            message.reactions.push({ user_id: req.user.id, emoji });
-            await message.save();
-            res.json({ action: 'added', emoji, messageId, userId: req.user.id });
+            // Add reaction
+            currentReactions = [...currentReactions, { user_id: userId, emoji }];
+            await message.update({ reactions: currentReactions });
+            res.json({ action: 'added', emoji, messageId, userId });
         }
     } catch (error) {
         handleError(res, error, 'Reaction toggle');

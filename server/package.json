@@ -24,7 +24,9 @@
     "multer": "^2.0.2",
     "node-fetch": "^2.7.0",
     "pg": "^8.18.0",
+    "sequelize": "^6.37.7",
     "socket.io": "^4.8.3",
+    "sqlite3": "^5.1.7",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

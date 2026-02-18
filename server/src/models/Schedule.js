@@ -1,19 +1,63 @@
-const mongoose = require('mongoose');
+const { DataTypes } = require('sequelize');
+const { sequelize } = require('../config/database');
 
-const scheduleSchema = new mongoose.Schema({
-    user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-    date: { type: Date, required: true },
-    start_time: { type: String, required: true },
-    end_time: { type: String, required: true },
-    shift_type: { type: String },
-    notes: { type: String },
-    created_by: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    branch: { type: String, default: 'betfalme' },
-    created_at: { type: Date, default: Date.now }
+const Schedule = sequelize.define('Schedule', {
+    id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true
+    },
+    user_id: {
+        type: DataTypes.UUID,
+        allowNull: false,
+        references: {
+            model: 'Users',
+            key: 'id'
+        }
+    },
+    date: {
+        type: DataTypes.DATEONLY,
+        allowNull: false
+    },
+    start_time: {
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    end_time: {
+        type: DataTypes.STRING,
+        allowNull: false
+    },
+    shift_type: {
+        type: DataTypes.STRING,
+        allowNull: true
+    },
+    notes: {
+        type: DataTypes.TEXT,
+        allowNull: true
+    },
+    created_by: {
+        type: DataTypes.UUID,
+        allowNull: true,
+        references: {
+            model: 'Users',
+            key: 'id'
+        }
+    },
+    branch: {
+        type: DataTypes.STRING,
+        defaultValue: 'betfalme'
+    }
+}, {
+    timestamps: true,
+    createdAt: 'created_at',
+    updatedAt: false,
+    underscored: true,
+    indexes: [
+        {
+            unique: true,
+            fields: ['user_id', 'date', 'start_time']
+        }
+    ]
 });
-
-scheduleSchema.index({ user_id: 1, date: 1, start_time: 1 }, { unique: true });
-
-const Schedule = mongoose.model('Schedule', scheduleSchema);
 
 module.exports = Schedule;

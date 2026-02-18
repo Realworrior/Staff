@@ -1,7 +1,9 @@
 const express = require('express');
 const Schedule = require('../models/Schedule');
+const User = require('../models/User');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 const { handleError } = require('../utils/errors');
+const { Op } = require('sequelize');
 
 const router = express.Router();
 
@@ -10,28 +12,37 @@ router.get('/', authMiddleware, async (req, res) => {
     try {
         const { start_date, end_date, user_id, branch } = req.query;
 
-        let query = {};
-        if (user_id) query.user_id = user_id;
+        let where = {};
+        if (user_id) where.user_id = user_id;
         if (start_date || end_date) {
-            query.date = {};
-            if (start_date) query.date.$gte = new Date(start_date);
-            if (end_date) query.date.$lte = new Date(end_date);
+            where.date = {};
+            if (start_date) where.date[Op.gte] = start_date;
+            if (end_date) where.date[Op.lte] = end_date;
         }
 
-        let schedules = await Schedule.find(query)
-            .populate('user_id', 'name role branch')
-            .sort({ date: 1, start_time: 1 });
+        let include = [{
+            model: User,
+            attributes: ['name', 'role', 'branch']
+        }];
 
         if (branch) {
-            schedules = schedules.filter(s => s.user_id && s.user_id.branch === branch);
+            include[0].where = { branch };
         }
 
-        const mappedSchedules = schedules.map(s => ({
-            ...s.toObject(),
-            id: s._id,
-            user_name: s.user_id ? s.user_id.name : 'Unknown',
-            user_role: s.user_id ? s.user_id.role : 'Unknown'
-        }));
+        const schedules = await Schedule.findAll({
+            where,
+            include,
+            order: [['date', 'ASC'], ['start_time', 'ASC']]
+        });
+
+        const mappedSchedules = schedules.map(s => {
+            const plain = s.get({ plain: true });
+            return {
+                ...plain,
+                user_name: plain.User ? plain.User.name : 'Unknown',
+                user_role: plain.User ? plain.User.role : 'Unknown'
+            };
+        });
 
         res.json(mappedSchedules);
     } catch (error) {
@@ -50,7 +61,7 @@ router.post('/', authMiddleware, requireRole('admin'), async (req, res) => {
 
         const schedule = await Schedule.create({
             user_id,
-            date: new Date(date),
+            date,
             start_time,
             end_time,
             shift_type,
@@ -59,7 +70,7 @@ router.post('/', authMiddleware, requireRole('admin'), async (req, res) => {
             branch: branch || 'betfalme'
         });
 
-        res.status(201).json({ ...schedule.toObject(), id: schedule._id });
+        res.status(201).json(schedule);
     } catch (error) {
         handleError(res, error, 'Create schedule');
     }
@@ -76,7 +87,7 @@ router.post('/bulk', authMiddleware, requireRole('admin'), async (req, res) => {
 
         const mappedSchedules = inputSchedules.map(s => ({
             user_id: s.user_id,
-            date: new Date(s.date),
+            date: s.date,
             start_time: s.start_time,
             end_time: s.end_time,
             shift_type: s.shift_type || null,
@@ -85,10 +96,9 @@ router.post('/bulk', authMiddleware, requireRole('admin'), async (req, res) => {
             branch: s.branch || 'betfalme'
         }));
 
-        // MongoDB insertMany handles multiple docs
-        await Schedule.insertMany(mappedSchedules);
+        await Schedule.bulkCreate(mappedSchedules, { ignoreDuplicates: true });
 
-        res.status(201).json({ message: `${inputSchedules.length} schedules created successfully` });
+        res.status(201).json({ message: `${inputSchedules.length} schedules processed successfully` });
     } catch (error) {
         handleError(res, error, 'Bulk create schedules');
     }
@@ -100,19 +110,21 @@ router.put('/:id', authMiddleware, requireRole('admin'), async (req, res) => {
         const { id } = req.params;
         const { start_time, end_time, shift_type, notes } = req.body;
 
+        const schedule = await Schedule.findByPk(id);
+
+        if (!schedule) {
+            return res.status(404).json({ error: 'Schedule not found' });
+        }
+
         const updateData = {};
         if (start_time !== undefined) updateData.start_time = start_time;
         if (end_time !== undefined) updateData.end_time = end_time;
         if (shift_type !== undefined) updateData.shift_type = shift_type;
         if (notes !== undefined) updateData.notes = notes;
 
-        const updated = await Schedule.findByIdAndUpdate(id, updateData, { new: true });
+        await schedule.update(updateData);
 
-        if (!updated) {
-            return res.status(404).json({ error: 'Schedule not found' });
-        }
-
-        res.json({ ...updated.toObject(), id: updated._id });
+        res.json(schedule);
     } catch (error) {
         handleError(res, error, 'Update schedule');
     }
@@ -122,7 +134,10 @@ router.put('/:id', authMiddleware, requireRole('admin'), async (req, res) => {
 router.delete('/:id', authMiddleware, requireRole('admin'), async (req, res) => {
     try {
         const { id } = req.params;
-        await Schedule.findByIdAndDelete(id);
+        const schedule = await Schedule.findByPk(id);
+        if (schedule) {
+            await schedule.destroy();
+        }
         res.json({ message: 'Schedule deleted successfully' });
     } catch (error) {
         handleError(res, error, 'Delete schedule');
@@ -138,12 +153,12 @@ router.delete('/range/bulk', authMiddleware, requireRole('admin'), async (req, r
             return res.status(400).json({ error: 'start_date and end_date are required' });
         }
 
-        const query = {
-            date: { $gte: new Date(start_date), $lte: new Date(end_date) }
+        let where = {
+            date: { [Op.gte]: start_date, [Op.lte]: end_date }
         };
-        if (branch) query.branch = branch;
+        if (branch) where.branch = branch;
 
-        await Schedule.deleteMany(query);
+        await Schedule.destroy({ where });
 
         res.json({ message: `Schedules deleted successfully in range` });
     } catch (error) {
@@ -153,7 +168,6 @@ router.delete('/range/bulk', authMiddleware, requireRole('admin'), async (req, r
 
 const multer = require('multer');
 const xlsx = require('xlsx');
-const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 
 // Configure Multer for memory storage
@@ -198,15 +212,19 @@ router.post('/import', authMiddleware, requireRole('admin'), upload.single('file
         for (const name of staffNames) {
             if (!name) continue;
             const cleanName = name.toString().trim();
-            // Try to find existing user (case-insensitive)
-            let user = await User.findOne({ name: { $regex: new RegExp(`^${cleanName}$`, 'i') } });
+            // Case-insensitive find via SQL
+            let user = await User.findOne({
+                where: {
+                    name: { [Op.like]: cleanName }
+                }
+            });
 
             if (!user) {
                 // Create new user
-                const username = cleanName.toLowerCase().replace(/\s+/g, '');
+                const usernameBase = cleanName.toLowerCase().replace(/\s+/g, '');
                 user = await User.create({
                     name: cleanName,
-                    username: `${username}_${Math.floor(Math.random() * 1000)}`, // Ensure uniqueness
+                    username: `${usernameBase}_${Math.floor(Math.random() * 1000)}`,
                     password_hash: defaultHash,
                     role: 'staff',
                     branch: req.body.branch || 'betfalme'
@@ -214,37 +232,30 @@ router.post('/import', authMiddleware, requireRole('admin'), upload.single('file
                 newUsersCount++;
                 console.log(`✨ Auto-created user: ${cleanName} (${user.username})`);
             }
-            userMap.set(cleanName, user._id);
+            userMap.set(cleanName, user.id);
         }
 
         // Parse Rows
         const schedulesToInsert = [];
         const rows = data.slice(1);
         let branch = req.body.branch || 'betfalme';
+        let allDates = [];
 
         for (const row of rows) {
             const dateVal = row[0];
             if (!dateVal) continue;
 
-            // With cellDates: true, xlsx returns a JS Date object for dates
-            let date = dateVal;
-            if (!(date instanceof Date)) {
-                // Fallback for non-date cells that might be strings
-                date = new Date(dateVal);
-            }
-
+            let date = dateVal instanceof Date ? dateVal : new Date(dateVal);
             if (isNaN(date.getTime())) continue;
 
-            // Initializing date to midday to avoid timezone issues when converting to ISO string
-            // or just use UTC components if needed. Local date is usually fine if we stick to YYYY-MM-DD
             const dateStr = date.toISOString().split('T')[0];
+            allDates.push(dateStr);
 
-            // Iterate columns for each staff
             staffNames.forEach((name, index) => {
                 if (!name) return;
                 const cleanName = name.toString().trim();
                 const userId = userMap.get(cleanName);
-                const shiftCode = row[index + 1]; // +1 because index 0 is Date
+                const shiftCode = row[index + 1];
 
                 if (userId && shiftCode) {
                     const code = shiftCode.toString().trim().toUpperCase();
@@ -257,7 +268,7 @@ router.post('/import', authMiddleware, requireRole('admin'), upload.single('file
                     if (start && end) {
                         schedulesToInsert.push({
                             user_id: userId,
-                            date: new Date(dateStr),
+                            date: dateStr,
                             start_time: start,
                             end_time: end,
                             shift_type: code,
@@ -271,17 +282,18 @@ router.post('/import', authMiddleware, requireRole('admin'), upload.single('file
         }
 
         if (schedulesToInsert.length > 0) {
-            // Remove existing schedules for the imported date range to avoid duplicates
-            const dates = schedulesToInsert.map(s => s.date.getTime());
-            const minDate = new Date(Math.min(...dates));
-            const maxDate = new Date(Math.max(...dates));
+            const sortedDates = [...new Set(allDates)].sort();
+            const minDate = sortedDates[0];
+            const maxDate = sortedDates[sortedDates.length - 1];
 
-            await Schedule.deleteMany({
-                date: { $gte: minDate, $lte: maxDate },
-                branch: branch
+            await Schedule.destroy({
+                where: {
+                    date: { [Op.gte]: minDate, [Op.lte]: maxDate },
+                    branch: branch
+                }
             });
 
-            await Schedule.insertMany(schedulesToInsert);
+            await Schedule.bulkCreate(schedulesToInsert, { ignoreDuplicates: true });
         }
 
         res.json({

@@ -1,31 +1,60 @@
-const mongoose = require('mongoose');
+const { Sequelize } = require('sequelize');
 const { createClient } = require('@supabase/supabase-js');
+const path = require('path');
 require('dotenv').config();
 
-// MongoDB connection
-const mongoUri = process.env.MONGODB_URI && !process.env.MONGODB_URI.includes('your_mongodb')
-  ? process.env.MONGODB_URI
-  : process.env.MONGODB_URI || 'mongodb://localhost:27017/staff';
+let sequelize;
 
-if (!process.env.MONGODB_URI || process.env.MONGODB_URI.includes('your_mongodb')) {
-  console.warn('⚠️  MONGODB_URI not set or placeholder; using fallback:', mongoUri);
+// Database connection logic
+// Priority: 1. DATABASE_URL/POSTGRES_URL (Postgres) -> 2. Supabase Config (Auto-construct) -> 3. SQLite
+let dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+
+// Auto-construct Supabase URL if components are present but full URL is not
+// We only do this in production (Vercel) to avoid overriding local SQLite
+if (!dbUrl && process.env.SUPABASE_URL && process.env.SUPABASE_DB_PASSWORD && process.env.NODE_ENV !== 'development') {
+  try {
+    const projectId = process.env.SUPABASE_URL.split('://')[1].split('.')[0];
+    const password = encodeURIComponent(process.env.SUPABASE_DB_PASSWORD);
+    dbUrl = `postgresql://postgres:${password}@db.${projectId}.supabase.co:5432/postgres`;
+    console.log('✨ Auto-constructed Supabase Database URL');
+  } catch (e) {
+    console.warn('⚠️  Auto-construction of Supabase URL failed:', e.message);
+  }
 }
 
-const connectPromise = mongoose.connect(mongoUri)
+if (dbUrl) {
+  console.log('🔗 Database: Using PostgreSQL (Production Mode)');
+  sequelize = new Sequelize(dbUrl, {
+    dialect: 'postgres',
+    logging: false,
+    dialectOptions: {
+      ssl: {
+        require: true,
+        rejectUnauthorized: false
+      }
+    }
+  });
+} else {
+  const sqlitePath = path.join(__dirname, '../../database.sqlite');
+  console.log(`📂 Database: Using SQLite (${sqlitePath})`);
+  sequelize = new Sequelize({
+    dialect: 'sqlite',
+    storage: sqlitePath,
+    logging: false
+  });
+}
+
+const connectPromise = sequelize.authenticate()
   .then(() => {
-    console.log('🍃 MongoDB connected');
-    return mongoose;
+    console.log('✅ SQL Database connected');
+    return sequelize;
   })
   .catch(err => {
-    console.error('❌ MongoDB connection error:', err.message);
-    if (err.message && (err.message.includes('bad auth') || err.message.includes('authentication failed'))) {
-      console.error('   → Check MONGODB_URI in server/.env: correct username/password and DB user permissions in Atlas.');
-      console.error('   → Or use a local MongoDB: MONGODB_URI=mongodb://localhost:27017/staff');
-    }
+    console.error('❌ SQL Database connection error:', err.message);
     throw err;
   });
 
-// Supabase (only for storage) – create only when both env vars are set
+// Supabase (only for storage)
 let supabase = null;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -36,8 +65,6 @@ if (supabaseUrl && supabaseKey) {
   } catch (e) {
     console.warn('⚠️  Supabase client init failed:', e.message);
   }
-} else {
-  console.warn('⚠️  SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY missing; file uploads disabled.');
 }
 
-module.exports = { mongoose, supabase, connectPromise };
+module.exports = { sequelize, supabase, connectPromise };

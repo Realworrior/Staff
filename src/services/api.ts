@@ -1,21 +1,14 @@
 import axios from 'axios';
 
 const getApiUrl = () => {
-    let url = import.meta.env.DEV ? '/api' : (import.meta.env.VITE_API_URL || '/api');
-
-    // Ensure the URL correctly includes the /api prefix
-    if (!url.includes('/api')) {
-        url = url.endsWith('/') ? `${url}api` : `${url}/api`;
-    }
-
-    // Always end with a trailing slash to work reliably with non-slashed relative paths
-    const finalUrl = url.endsWith('/') ? url : `${url}/`;
+    // Hardcode /api/ to resolve persistent routing issues on Vercel
+    const url = '/api/';
 
     if (!import.meta.env.DEV) {
-        console.log('[API] Initialized with Base URL:', finalUrl);
+        console.log('[API] Initialized with Fixed Base URL:', url);
     }
 
-    return finalUrl;
+    return url;
 };
 
 const API_URL = getApiUrl();

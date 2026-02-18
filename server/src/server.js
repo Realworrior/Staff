@@ -4,8 +4,14 @@ const cors = require('cors');
 const path = require('path');
 
 // Initialize database
-const { mongoose, connectPromise } = require('./config/database');
+const { sequelize, connectPromise } = require('./config/database');
 const User = require('./models/User');
+const Attendance = require('./models/Attendance');
+const Schedule = require('./models/Schedule');
+const AccountLog = require('./models/AccountLog');
+const Payroll = require('./models/Payroll');
+const ChatChannel = require('./models/ChatChannel');
+const ChatMessage = require('./models/ChatMessage');
 const bcrypt = require('bcryptjs');
 
 // Run automated initialization for MongoDB
@@ -13,8 +19,12 @@ const { seedStaff } = require('./utils/userSeed');
 
 const seedData = async () => {
     try {
+        console.log('🚀 Running database synchronization...');
+        await sequelize.sync({ alter: true });
+        console.log('✅ Database schema synchronized.');
+
         // 1. Seed Admin
-        const adminExists = await User.findOne({ username: 'admin' });
+        const adminExists = await User.findOne({ where: { username: 'admin' } });
         if (!adminExists) {
             console.log('🚀 No admin found. Seeding default admin user...');
             const hash = bcrypt.hashSync('falmebet123', 10);
@@ -141,13 +151,10 @@ app.get('/api', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-    const states = ['disconnected', 'connected', 'connecting', 'disconnecting'];
-    const dbStatus = states[mongoose.connection.readyState] || 'unknown';
-
     res.json({
-        status: dbStatus === 'connected' ? 'ok' : 'error',
-        database: dbStatus,
-        message: dbStatus === 'connected' ? 'Falmebet API is running' : 'Database connection issues'
+        status: 'ok',
+        database: 'sql',
+        message: 'Falmebet API with SQL backend is running'
     });
 });
 
