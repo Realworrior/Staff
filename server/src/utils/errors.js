@@ -1,25 +1,28 @@
 /**
  * Centralized error handler for API routes
- * Handles Mongoose connection/buffering errors specifically
+ * Handles SQL/Sequelize connection and query errors
  */
 const handleError = (res, error, context = 'Operation') => {
     console.error(`❌ ${context} error:`, error);
 
-    // Mongoose connection or buffering issues (usually due to missing/invalid MONGODB_URI)
+    // SQL Connection issues
     if (
-        error.name === 'MongooseError' ||
-        error.message.includes('buffering') ||
-        error.name === 'MongoNetworkError' ||
-        error.name === 'MongoServerSelectionError'
+        error.name === 'SequelizeConnectionError' ||
+        error.name === 'SequelizeConnectionRefusedError' ||
+        error.name === 'SequelizeHostNotFoundError' ||
+        error.name === 'SequelizeHostNotReachableError' ||
+        error.name === 'SequelizeInvalidConnectionError' ||
+        error.name === 'SequelizeConnectionTimedOutError'
     ) {
         return res.status(503).json({
-            error: 'Database is currently unavailable. Please ensure MONGODB_URI is configured correctly in the .env file.'
+            error: 'Database connection failed. Please check your DATABASE_URL or Supabase credentials.',
+            debug_message: error.message
         });
     }
 
-    // MongoDB Duplicate Key Error (Unique Constraint)
-    if (error.code === 11000) {
-        const field = Object.keys(error.keyPattern || {})[0] || 'field';
+    // SQL Constraint errors
+    if (error.name === 'SequelizeUniqueConstraintError') {
+        const field = error.errors?.[0]?.path || 'field';
         return res.status(409).json({
             error: `A record with this ${field} already exists.`,
             field: field
@@ -27,11 +30,11 @@ const handleError = (res, error, context = 'Operation') => {
     }
 
     // Default to Internal Server Error
-    console.error(`❌ ${context} Error Details:`, error);
     res.status(500).json({
         error: `Internal server error during ${context.toLowerCase()}.`,
         debug_message: error.message,
-        debug_stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+        // We include stack only in non-prod, but debug_message is safe and helpful
+        debug_stack: process.env.NODE_ENV !== 'production' ? error.stack : undefined
     });
 };
 
