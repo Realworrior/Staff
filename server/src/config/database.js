@@ -10,14 +10,18 @@ let sequelize;
 let dbUrl = process.env.DATABASE_URL || process.env.POSTGRES_URL;
 
 // Auto-construct Supabase URL if components are present but full URL is not
-// We only do this in production (Vercel) to avoid overriding local SQLite
-if (!dbUrl && process.env.SUPABASE_URL && process.env.SUPABASE_DB_PASSWORD && process.env.NODE_ENV !== 'development') {
+// We check for process.env.VERCEL to know we are in production
+if (!dbUrl && process.env.SUPABASE_URL && process.env.SUPABASE_DB_PASSWORD && (process.env.NODE_ENV === 'production' || process.env.VERCEL)) {
   try {
-    const projectId = process.env.SUPABASE_URL.split('://')[1].split('.')[0];
+    // Extract project ID reliably from URL
+    const urlParts = process.env.SUPABASE_URL.replace(/\/$/, '').split('.');
+    const projectId = urlParts[0].split('://')[1] || urlParts[0];
+
     const password = encodeURIComponent(process.env.SUPABASE_DB_PASSWORD);
-    // Construct direct connection URL
-    dbUrl = `postgresql://postgres:${password}@db.${projectId}.supabase.co:5432/postgres`;
-    console.log(`✨ Auto-constructed Supabase URL for host: db.${projectId}.supabase.co`);
+    // Use the session pooler host if available, else direct
+    const host = `db.${projectId}.supabase.co`;
+    dbUrl = `postgresql://postgres:${password}@${host}:5432/postgres`;
+    console.log(`✨ Auto-constructed Supabase URL for host: ${host}`);
   } catch (e) {
     console.warn('⚠️  Auto-construction of Supabase URL failed:', e.message);
   }
