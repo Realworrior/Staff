@@ -15,8 +15,9 @@ if (!dbUrl && process.env.SUPABASE_URL && process.env.SUPABASE_DB_PASSWORD && pr
   try {
     const projectId = process.env.SUPABASE_URL.split('://')[1].split('.')[0];
     const password = encodeURIComponent(process.env.SUPABASE_DB_PASSWORD);
+    // Construct direct connection URL
     dbUrl = `postgresql://postgres:${password}@db.${projectId}.supabase.co:5432/postgres`;
-    console.log('✨ Auto-constructed Supabase Database URL');
+    console.log(`✨ Auto-constructed Supabase URL for host: db.${projectId}.supabase.co`);
   } catch (e) {
     console.warn('⚠️  Auto-construction of Supabase URL failed:', e.message);
   }
